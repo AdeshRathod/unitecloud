@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:async';
 
 import 'package:get/get.dart';
 import 'package:flutter/material.dart';
@@ -11,17 +12,11 @@ import '../../services/bluetooth_service.dart';
 class TransferController extends GetxController with WidgetsBindingObserver {
   String get contactJson => jsonEncode(_buildContact().toJson());
   Future<void> shareByNearby(BuildContext context) async {
+    // Kept for backward compatibility: open Nearby sheet from the view.
+    // No-op here or could be used to trigger default flow.
     if (!_validate()) return;
-    final contact = _buildContact();
-    final jsonStr = jsonEncode(contact.toJson());
-    final token = _generateToken();
-    _append('Advertising contact via TransferService (token=$token)...');
-    await transferService.advertise(
-      'unitecloud-sender',
-      token,
-      payloadToSend: jsonStr,
-    );
-    _append('TransferService advertising started. Token: $token');
+    // Default behavior: start open auto nearby (advertise+discover).
+    await startNearbyAuto();
   }
 
   final hasNfc = true.obs;
@@ -51,6 +46,11 @@ class TransferController extends GetxController with WidgetsBindingObserver {
         email.value = emailController.text;
       }
     });
+
+    // Subscribe to service logs
+    _nearbyLogSub = transferService.logs.listen((msg) {
+      _append('Nearby: $msg');
+    });
   }
 
   @override
@@ -60,6 +60,8 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     phoneController.dispose();
     emailController.dispose();
     nfcService.dispose();
+    stopNearby();
+    _nearbyLogSub?.cancel();
     transferService.dispose();
     super.onClose();
   }
@@ -87,6 +89,12 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   final contacts = <Contact>[].obs;
   final listening = false.obs;
   final nfcEnabled = true.obs;
+
+  // Nearby state
+  final nearbyActive = false.obs;
+  final nearbyMode = ''.obs; // 'auto' | 'sender' | 'receiver'
+  final advertisingToken = RxnString();
+  StreamSubscription<String>? _nearbyLogSub;
 
   Future<void> checkNfcEnabledSilent() async {
     final enabled = await NfcUtils.isNfcEnabled();
@@ -262,5 +270,84 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   void saveContact(Contact contact) {
     contacts.insert(0, contact);
     _append('Contact saved: ${contact.name}');
+  }
+
+  // Nearby: Auto mode (bidirectional)
+  Future<void> startNearbyAuto() async {
+    if (!_validate()) return;
+    if (nearbyActive.value) {
+      _append('Nearby already running.');
+      return;
+    }
+    final jsonStr = contactJson;
+    nearbyMode.value = 'auto';
+    nearbyActive.value = true;
+    // Start both advertiseOpen and discoverOpen; service stops itself when connected.
+    _append('Starting Auto Nearby (advertise + discover) ...');
+    await transferService.advertiseOpen(
+      'unitecloud-auto',
+      payloadToSend: jsonStr,
+      onPayload: (full) => _handleIncoming(full),
+    );
+    await transferService.discoverOpen(
+      payloadToSend: jsonStr,
+      onPayload: (full) => _handleIncoming(full),
+    );
+  }
+
+  Future<String?> startNearbyCodeSender() async {
+    if (!_validate()) return null;
+    if (nearbyActive.value) {
+      _append('Nearby already running.');
+      return advertisingToken.value;
+    }
+    final token = _generateToken();
+    final jsonStr = contactJson;
+    nearbyMode.value = 'sender';
+    nearbyActive.value = true;
+    advertisingToken.value = token;
+    _append('Starting Nearby as sender with code $token');
+    await transferService.advertise(
+      'unitecloud-sender',
+      token,
+      payloadToSend: jsonStr,
+      onPayload: (full) => _handleIncoming(full),
+    );
+    return token;
+  }
+
+  Future<void> startNearbyCodeReceiver(
+    String token, {
+    bool sendBack = true,
+  }) async {
+    if (token.trim().isEmpty) {
+      _append('Enter a valid code.');
+      return;
+    }
+    if (nearbyActive.value) {
+      _append('Nearby already running.');
+      return;
+    }
+    final jsonStr = sendBack && _validate() ? contactJson : null;
+    nearbyMode.value = 'receiver';
+    nearbyActive.value = true;
+    advertisingToken.value = token;
+    _append(
+      'Starting Nearby as receiver for code $token ${sendBack ? '(will send my contact back)' : ''}',
+    );
+    await transferService.discover(
+      token,
+      payloadToSend: jsonStr,
+      onPayload: (full) => _handleIncoming(full),
+    );
+  }
+
+  Future<void> stopNearby() async {
+    if (!nearbyActive.value) return;
+    await transferService.stopAll();
+    nearbyActive.value = false;
+    advertisingToken.value = null;
+    nearbyMode.value = '';
+    _append('Nearby stopped.');
   }
 }
