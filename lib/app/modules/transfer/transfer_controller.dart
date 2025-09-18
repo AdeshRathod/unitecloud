@@ -2,28 +2,128 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:get/get.dart';
+import 'package:flutter/material.dart';
 import '../../data/models/contact.dart';
 import '../../services/nfc_service.dart';
-import '../../services/transfer_service.dart';
+import '../../services/nfc_utils.dart';
+import '../../services/bluetooth_service.dart';
 
-/// Controller orchestrating NFC tap-to-share and optional Nearby transfer.
-class TransferController extends GetxController {
+class TransferController extends GetxController with WidgetsBindingObserver {
+  String get contactJson => jsonEncode(_buildContact().toJson());
+  Future<void> shareByNearby(BuildContext context) async {
+    if (!_validate()) return;
+    final contact = _buildContact();
+    final jsonStr = jsonEncode(contact.toJson());
+    final token = _generateToken();
+    _append('Advertising contact via TransferService (token=$token)...');
+    await transferService.advertise(
+      'unitecloud-sender',
+      token,
+      payloadToSend: jsonStr,
+    );
+    _append('TransferService advertising started. Token: $token');
+  }
+
+  final hasNfc = true.obs;
+  final nameController = TextEditingController();
+  final phoneController = TextEditingController();
+  final emailController = TextEditingController();
+
+  @override
+  void onInit() {
+    super.onInit();
+    WidgetsBinding.instance.addObserver(this);
+    nameController.text = name.value;
+    phoneController.text = phone.value;
+    emailController.text = email.value;
+    nameController.addListener(() {
+      if (name.value != nameController.text) {
+        name.value = nameController.text;
+      }
+    });
+    phoneController.addListener(() {
+      if (phone.value != phoneController.text) {
+        phone.value = phoneController.text;
+      }
+    });
+    emailController.addListener(() {
+      if (email.value != emailController.text) {
+        email.value = emailController.text;
+      }
+    });
+  }
+
+  @override
+  void onClose() {
+    WidgetsBinding.instance.removeObserver(this);
+    nameController.dispose();
+    phoneController.dispose();
+    emailController.dispose();
+    nfcService.dispose();
+    transferService.dispose();
+    super.onClose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final context = Get.context;
+      if (context != null) {
+        checkNfcEnabled(context);
+      }
+    }
+  }
+
   final NfcService nfcService;
   final TransferService transferService;
 
   TransferController({required this.nfcService, required this.transferService});
 
-  final name = ''.obs;
-  final phone = ''.obs;
-  final email = ''.obs;
+  final name = 'Adesh'.obs;
+  final phone = '9307015431'.obs;
+  final email = 'adesh@gmail.com'.obs;
 
-  final log = ''.obs; // aggregated log
+  final log = ''.obs;
   final contacts = <Contact>[].obs;
   final listening = false.obs;
+  final nfcEnabled = true.obs;
+
+  Future<void> checkNfcEnabledSilent() async {
+    final enabled = await NfcUtils.isNfcEnabled();
+    if (nfcEnabled.value != enabled) {
+      nfcEnabled.value = enabled;
+      _append(enabled ? 'NFC is now active.' : 'NFC is now disabled.');
+    }
+  }
+
+  Future<void> checkNfcEnabled(BuildContext context) async {
+    final enabled = await NfcUtils.ensureNfcEnabled(context);
+    if (nfcEnabled.value != enabled) {
+      nfcEnabled.value = enabled;
+      _append(enabled ? 'NFC is now active.' : 'NFC is now disabled.');
+    }
+  }
+
+  @override
+  void onReady() {
+    super.onReady();
+    checkNfcHardwareAndNfcEnabled();
+  }
+
+  Future<void> checkNfcHardwareAndNfcEnabled() async {
+    final has = await NfcUtils.hasNfcHardware();
+    hasNfc.value = has;
+    if (has) {
+      await checkNfcEnabledSilent();
+    } else {
+      nfcEnabled.value = false;
+      _append('NFC device not detected on your device. Use share option.');
+    }
+  }
 
   void _append(String msg) {
     final ts = DateTime.now().toIso8601String();
-    log.value = '[${ts.split('T').last}] $msg\n' + log.value;
+    log.value = '[${ts.split('T').last}] $msg\n${log.value}';
   }
 
   bool _validate() {
@@ -48,9 +148,13 @@ class TransferController extends GetxController {
     email: email.value.trim(),
   );
 
-  /// Share either via direct NFC (if payload small) or NFC token handshake + Nearby.
-  Future<void> shareByTap() async {
+  Future<void> shareByTap(BuildContext context) async {
     if (!_validate()) return;
+    await checkNfcEnabled(context);
+    if (!nfcEnabled.value) {
+      _append('NFC is not enabled or not available.');
+      return;
+    }
     final contact = _buildContact();
     final jsonStr = jsonEncode(contact.toJson());
     final bytes = utf8.encode(jsonStr);
@@ -61,20 +165,23 @@ class TransferController extends GetxController {
     } else {
       final token = _generateToken();
       _append('Payload large; using token handshake token=$token');
-      // Start advertising with token & after NFC handshake we expect remote to connect.
       await transferService.advertise(
         'unitecloud-sender',
         token,
         payloadToSend: jsonStr,
       );
       await nfcService.startWriting(token);
-      // We'll rely on remote side reading token & starting discovery.
     }
   }
 
-  Future<void> listenForTap() async {
+  Future<void> listenForTap(BuildContext context) async {
     if (listening.value) {
       _append('Already listening.');
+      return;
+    }
+    await checkNfcEnabled(context);
+    if (!nfcEnabled.value) {
+      _append('NFC is not enabled or not available.');
       return;
     }
     listening.value = true;
@@ -121,10 +228,39 @@ class TransferController extends GetxController {
     return RegExp(r'^[A-Z0-9]{6}$').hasMatch(input.trim());
   }
 
-  @override
-  void onClose() {
-    nfcService.dispose();
-    transferService.dispose();
-    super.onClose();
+  Contact? parseScannedPayload(String data) {
+    final raw = data.trim();
+    if (raw.isEmpty) {
+      _append('QR scan returned empty data');
+      return null;
+    }
+    try {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      return Contact.fromJson(map);
+    } catch (_) {
+      if (raw.startsWith('BEGIN:VCARD')) {
+        String extract(String key) {
+          final re = RegExp('^$key:([^\n\r]+)', multiLine: true);
+          final m = re.firstMatch(raw);
+          return m != null ? m.group(1)!.trim() : '';
+        }
+
+        final name = extract('FN');
+        final phone = extract('TEL');
+        final email = extract('EMAIL');
+        if (name.isEmpty && phone.isEmpty && email.isEmpty) {
+          _append('Parsed vCard but it was empty');
+          return null;
+        }
+        return Contact(name: name, phone: phone, email: email);
+      }
+    }
+    _append('Unsupported QR payload format');
+    return null;
+  }
+
+  void saveContact(Contact contact) {
+    contacts.insert(0, contact);
+    _append('Contact saved: ${contact.name}');
   }
 }

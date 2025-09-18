@@ -1,6 +1,6 @@
 import 'package:get/get.dart';
 import '../../services/nfc_service.dart';
-import '../../services/transfer_service.dart';
+import '../../services/bluetooth_service.dart';
 import 'transfer_controller.dart';
 
 class TransferBinding extends Bindings {

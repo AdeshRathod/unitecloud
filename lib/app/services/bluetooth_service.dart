@@ -1,16 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
-
-/// Placeholder import, adjust if package provides different entrypoint.
 import 'package:nearby_connections/nearby_connections.dart';
 
-/// A wrapper around Nearby Connections for advertising / discovering devices
-/// after an NFC token handshake. This focuses on API surface; actual runtime
-/// requires platform permissions (Bluetooth, Location, Nearby Sharing)
-/// and currently is Android-only.
 class TransferService {
   static const Strategy _strategy = Strategy.P2P_POINT_TO_POINT;
 

@@ -4,9 +4,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:nfc_manager/nfc_manager.dart';
 
-/// A wrapper around `nfc_manager` & `ndef` packages to simplify
-/// starting NFC write & read sessions. Supports only NDEF text records
-/// for simplicity.
 class NfcService {
   final _logController = StreamController<String>.broadcast();
   Stream<String> get logs => _logController.stream;
@@ -72,7 +69,6 @@ class NfcService {
     );
   }
 
-  /// Start a reading session. Cancels after first tag is read.
   Future<void> startReading({void Function(String data)? onPayload}) async {
     if (_sessionActive) {
       _log('Session already active.');
