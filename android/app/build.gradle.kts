@@ -8,7 +8,8 @@ plugins {
 android {
     namespace = "com.example.unitecloud"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Use installed NDK version with valid source.properties; adjust if your SDK changes.
+    ndkVersion = "26.3.11579264"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
