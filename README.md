@@ -2,14 +2,13 @@
 
 This project demonstrates two approaches for sharing a small contact card between nearby devices:
 
-1. NFC-only for small payloads (<= ~1.8 KB) – write/read JSON contact directly to the NFC tag / device.
-2. Hybrid (NFC handshake + Nearby / Bluetooth / Wi-Fi Direct) – NFC transfers only a short 6-char token, then the full JSON payload is sent over a higher-bandwidth offline channel using `nearby_connections`.
+1. NFC phone-to-phone using HCE (Host Card Emulation) – one device emulates a card that serves the JSON contact in chunks; the peer reads it using reader mode.
+2. Nearby Connections (Bluetooth / Wi‑Fi Direct) – for auto-discovery or manual code, supporting bidirectional exchange without requiring NFC.
 
 ## Features
 
-- Create a contact (name, phone, email) and share via NFC tap.
-- Automatically decide if payload fits direct NFC, otherwise fall back to token handshake.
-- Listen mode to receive incoming NFC payloads or handshake tokens.
+- Create a contact (name, phone, email) and share via NFC phone-to-phone (HCE based).
+- Clean Nearby flows: auto-discover or manual 6-char code entry, with bidirectional exchange.
 - Nearby Connections wrapper to advertise/discover using token-based serviceId.
 - Reactive UI with logs and list of received contacts (GetX state management).
 
@@ -19,8 +18,8 @@ This project demonstrates two approaches for sharing a small contact card betwee
 lib/
 	app/
 		data/models/contact.dart
-		services/nfc_service.dart
-		services/transfer_service.dart
+		services/nfc_hce_service.dart
+		services/bluetooth_service.dart (Nearby wrapper)
 		modules/transfer/
 			transfer_binding.dart
 			transfer_controller.dart
@@ -33,9 +32,7 @@ lib/
 Added to `pubspec.yaml`:
 
 - get – state management & DI
-- nfc_manager – low-level NFC session control
-- ndef – constructing & parsing NDEF records
-- nearby_connections – offline P2P (Bluetooth / Wi‑Fi Direct) for larger payloads
+- nearby_connections – offline P2P (Bluetooth / Wi‑Fi Direct)
 - permission_handler – runtime permission requests (Bluetooth & Location)
 
 ## Permissions & Platform Notes
@@ -58,25 +55,24 @@ On iOS: `nearby_connections` is not supported; NFC reading/writing limited by ha
 
 ## Architecture Overview
 
-- `TransferController` decides sharing strategy based on payload size.
-- `NfcService` abstracts session lifecycle (startReading / startWriting / stopSession) & logs.
+- `TransferController` orchestrates NFC HCE exchange and Nearby flows.
+- Native Android HCE service serves an APDU-based chunk protocol; the app runs reader mode to pull payload.
 - `TransferService` abstracts Nearby advertising, discovery, and payload sending.
-- A 6-character token (base32-like) identifies the temporary Nearby serviceId: `unitecloud.transfer.<TOKEN>`.
-- Logs aggregated for transparency & simple debugging.
+- A 6-character token (base32-like) identifies the temporary Nearby serviceId.
+- Logs aggregated for transparency & debugging.
 
-### Data Flow (Direct NFC)
-
-```
-User taps Share -> Controller builds JSON -> NFC write session -> Receiver read session -> JSON parsed -> Contact saved
-```
-
-### Data Flow (Hybrid Handshake)
+### Data Flow (NFC HCE)
 
 ```
-Share: build JSON (too large) -> generate token -> start Nearby advertising -> write token via NFC -> Receiver reads token -> discovery -> connects -> receives full JSON -> parsed -> saved
+Both devices tap Share by NFC -> each sets HCE payload with its contact -> a deterministic rule picks which reads first -> reader connects and pulls chunks -> JSON parsed -> Contact saved
 ```
 
-In the implementation, when the controller chooses the hybrid path it calls `advertise(..., payloadToSend: fullJson)`. The `TransferService` stores this and, upon `onConnectionInitiated`, automatically sends the full JSON bytes over the established Nearby connection—no extra UI action required. The receiver, once discovery connects, accepts the connection and any received payload is forwarded to the controller for parsing and persistence.
+### Data Flow (Nearby)
+
+```
+Auto: both tap Start -> advertise+discover -> connect -> exchange payloads.
+Manual: one gets 6-char code -> other enters code -> connect -> exchange payloads.
+```
 
 ## Testing Plan
 
@@ -85,11 +81,12 @@ In the implementation, when the controller chooses the hybrid path it calls `adv
 3. Modify code temporarily to pad JSON > 2 KB -> Tap: confirm token path: receiver first logs token, then after Nearby connection full payload arrives.
 4. Turn off NFC on receiver -> attempt share -> ensure proper availability log.
 5. Deny Bluetooth / Location permission -> verify graceful failure messages.
+6. For NFC HCE, align backs of phones; if both try to read, the deterministic role prevents collisions.
 
 ## Limitations
 
 - Nearby Connections: Android only.
-- NFC tag size & phone-to-phone capabilities vary by hardware.
+- NFC HCE phone-to-phone varies by OEM; timings and chunk sizes tuned conservatively.
 - No persistent storage (in-memory list only) – consider Hive/SQLite for production.
 - No encryption / security handshake; suitable only for demo or non-sensitive data.
 - Error handling simplified; production should handle more edge cases (timeouts, partial transfers).

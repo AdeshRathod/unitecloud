@@ -6,7 +6,6 @@ import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../data/models/contact.dart';
-import '../../services/nfc_service.dart';
 import '../../services/nfc_hce_service.dart';
 import '../../services/nfc_utils.dart';
 import '../../services/bluetooth_service.dart';
@@ -53,9 +52,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     _nearbyLogSub = transferService.logs.listen((msg) {
       _append('Nearby: $msg');
     });
-    _nfcLogSub = nfcService.logs.listen((msg) {
-      _append('NFC: $msg');
-    });
   }
 
   @override
@@ -64,10 +60,8 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     nameController.dispose();
     phoneController.dispose();
     emailController.dispose();
-    nfcService.dispose();
     stopNearby();
     _nearbyLogSub?.cancel();
-    _nfcLogSub?.cancel();
     transferService.dispose();
     super.onClose();
   }
@@ -82,10 +76,8 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     }
   }
 
-  final NfcService nfcService;
   final TransferService transferService;
-
-  TransferController({required this.nfcService, required this.transferService});
+  TransferController({required this.transferService});
 
   final name = 'Adesh'.obs;
   final phone = '9307015431'.obs;
@@ -93,7 +85,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
 
   final log = ''.obs;
   final contacts = <Contact>[].obs;
-  final listening = false.obs;
   final nfcEnabled = true.obs;
   final hceActive = false.obs;
   // UI: NFC reading progress/state
@@ -105,7 +96,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   final nearbyMode = ''.obs; // 'auto' | 'sender' | 'receiver'
   final advertisingToken = RxnString();
   StreamSubscription<String>? _nearbyLogSub;
-  StreamSubscription<String>? _nfcLogSub;
 
   Future<void> checkNfcEnabledSilent() async {
     final enabled = await NfcUtils.isNfcEnabled();
@@ -166,32 +156,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     phone: phone.value.trim(),
     email: email.value.trim(),
   );
-
-  Future<void> shareByTap(BuildContext context) async {
-    if (!_validate()) return;
-    await checkNfcEnabled(context);
-    if (!nfcEnabled.value) {
-      _append('NFC is not enabled or not available.');
-      return;
-    }
-    final contact = _buildContact();
-    final jsonStr = jsonEncode(contact.toJson());
-    final bytes = utf8.encode(jsonStr);
-    _append('Prepared contact (${bytes.length} bytes).');
-    if (bytes.length <= 1800) {
-      _append('Using direct NFC write.');
-      await nfcService.startWriting(jsonStr);
-    } else {
-      final token = _generateToken();
-      _append('Payload large; using token handshake token=$token');
-      await transferService.advertise(
-        'unitecloud-sender',
-        token,
-        payloadToSend: jsonStr,
-      );
-      await nfcService.startWriting(token);
-    }
-  }
 
   // HCE: emulate a card to allow phone-to-phone via NFC
   Future<void> startHceShare(BuildContext context) async {
@@ -339,39 +303,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     } catch (_) {
       // ignore UI errors
     }
-  }
-
-  Future<void> listenForTap(BuildContext context) async {
-    if (listening.value) {
-      _append('Already listening.');
-      return;
-    }
-    await checkNfcEnabled(context);
-    if (!nfcEnabled.value) {
-      _append('NFC is not enabled or not available.');
-      return;
-    }
-    listening.value = true;
-    _append('Listening for NFC tap ...');
-    await nfcService.startReading(
-      onPayload: (data) async {
-        _append(
-          'NFC payload received: ${data.substring(0, data.length.clamp(0, 120))}${data.length > 120 ? '...' : ''}',
-        );
-        if (_looksLikeToken(data)) {
-          _append('Detected token; starting discovery.');
-          await transferService.discover(
-            data,
-            onPayload: (full) {
-              _handleIncoming(full);
-            },
-          );
-        } else {
-          _handleIncoming(data);
-        }
-      },
-    );
-    listening.value = false;
   }
 
   void _handleIncoming(String jsonStr) async {
@@ -537,10 +468,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final rnd = Random.secure();
     return List.generate(6, (_) => chars[rnd.nextInt(chars.length)]).join();
-  }
-
-  bool _looksLikeToken(String input) {
-    return RegExp(r'^[A-Z0-9]{6}$').hasMatch(input.trim());
   }
 
   Contact? parseScannedPayload(String data) {

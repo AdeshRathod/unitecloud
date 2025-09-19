@@ -1,0 +1,1 @@
+This placeholder file exists only to ensure the services directory remains committed after removing nfc_service.dart if it was the last file. You may delete this file later.
