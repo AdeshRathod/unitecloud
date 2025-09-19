@@ -109,7 +109,7 @@ class TransferView extends StatelessWidget {
                             controller.hceActive.value)
                           TextButton(
                             onPressed: () async {
-                              await controller.retryNfcRead(context);
+                              await controller.retryNfcRead();
                             },
                             child: const Text('Try again'),
                           ),
@@ -174,39 +174,39 @@ class TransferView extends StatelessWidget {
                 keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 12),
-              // Manual NFC role toggle
-              Obx(() {
-                final sel = controller.nfcRoleOverride.value;
-                return Row(
-                  children: [
-                    const Text('NFC role:'),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      label: const Text('Auto'),
-                      selected: sel == 'auto',
-                      onSelected: (v) {
-                        if (v) controller.nfcRoleOverride.value = 'auto';
-                      },
-                    ),
-                    const SizedBox(width: 6),
-                    ChoiceChip(
-                      label: const Text('Reader'),
-                      selected: sel == 'reader',
-                      onSelected: (v) {
-                        if (v) controller.nfcRoleOverride.value = 'reader';
-                      },
-                    ),
-                    const SizedBox(width: 6),
-                    ChoiceChip(
-                      label: const Text('Card'),
-                      selected: sel == 'card',
-                      onSelected: (v) {
-                        if (v) controller.nfcRoleOverride.value = 'card';
-                      },
-                    ),
-                  ],
-                );
-              }),
+
+              // Obx(() {
+              //   final sel = controller.nfcRoleOverride.value;
+              //   return Row(
+              //     children: [
+              //       const Text('NFC role:'),
+              //       const SizedBox(width: 8),
+              //       ChoiceChip(
+              //         label: const Text('Auto'),
+              //         selected: sel == 'auto',
+              //         onSelected: (v) {
+              //           if (v) controller.nfcRoleOverride.value = 'auto';
+              //         },
+              //       ),
+              //       const SizedBox(width: 6),
+              //       ChoiceChip(
+              //         label: const Text('Reader'),
+              //         selected: sel == 'reader',
+              //         onSelected: (v) {
+              //           if (v) controller.nfcRoleOverride.value = 'reader';
+              //         },
+              //       ),
+              //       const SizedBox(width: 6),
+              //       ChoiceChip(
+              //         label: const Text('Card'),
+              //         selected: sel == 'card',
+              //         onSelected: (v) {
+              //           if (v) controller.nfcRoleOverride.value = 'card';
+              //         },
+              //       ),
+              //     ],
+              //   );
+              // }),
               const SizedBox(height: 12),
               Wrap(
                 alignment: WrapAlignment.center,
@@ -219,9 +219,7 @@ class TransferView extends StatelessWidget {
                         controller.hasNfc.value
                             ? ElevatedButton.icon(
                               onPressed: () async {
-                                await controller.shareByNfcPhoneToPhone(
-                                  context,
-                                );
+                                await controller.shareByNfcPhoneToPhone();
                               },
                               icon: const Icon(Icons.nfc),
                               label: const Text('Share by NFC'),

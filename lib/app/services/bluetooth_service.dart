@@ -103,7 +103,7 @@ class TransferService {
     if (!await _ensurePermissionsForAdvertise()) return;
     _log('Starting advertising with token=$token ...');
     final epName = 'uc|${token.toUpperCase()}';
-    Future<bool> _startAdv() async {
+    Future<bool> startAdv() async {
       return await _nearby.startAdvertising(
         epName,
         _strategy,
@@ -151,7 +151,7 @@ class TransferService {
     }
 
     try {
-      _advertising = await _startAdv();
+      _advertising = await startAdv();
     } on PlatformException catch (e) {
       final msg = e.message ?? '';
       if (msg.contains('STATUS_ALREADY_ADVERTISING')) {
@@ -160,7 +160,7 @@ class TransferService {
         );
         await _nearby.stopAdvertising();
         await Future.delayed(const Duration(milliseconds: 150));
-        _advertising = await _startAdv();
+        _advertising = await startAdv();
         _log('Advertising restarted: $_advertising');
         return;
       }
@@ -182,7 +182,7 @@ class TransferService {
     if (!await _ensurePermissionsForDiscover()) return;
     _log('Starting discovery for token=$token ...');
     final tokenUp = token.toUpperCase();
-    Future<bool> _start() async {
+    Future<bool> start() async {
       return await _nearby.startDiscovery(
         'unitecloud-discoverer',
         _strategy,
@@ -384,7 +384,7 @@ class TransferService {
     }
 
     try {
-      _discovering = await _start();
+      _discovering = await start();
     } on PlatformException catch (e) {
       final msg = e.message ?? '';
       if (msg.contains('MISSING_PERMISSION_ACCESS_COARSE_LOCATION')) {
@@ -394,7 +394,7 @@ class TransferService {
         final locFine = await Permission.locationWhenInUse.request();
         final locCoarse = await Permission.location.request();
         if (locFine.isGranted || locCoarse.isGranted) {
-          _discovering = await _start();
+          _discovering = await start();
         } else {
           _log('Location permission not granted. Cannot discover.');
           return;
@@ -403,7 +403,7 @@ class TransferService {
         _log('Discovery already active. Forcing stop and retry...');
         await _nearby.stopDiscovery();
         await Future.delayed(const Duration(milliseconds: 150));
-        _discovering = await _start();
+        _discovering = await start();
         _log('Discovery restarted: $_discovering');
         return;
       } else {
@@ -426,7 +426,7 @@ class TransferService {
     }
     if (!await _ensurePermissionsForAdvertise()) return;
     _log('Starting open advertising ...');
-    Future<bool> _startAdvOpen() async {
+    Future<bool> startAdvOpen() async {
       return await _nearby.startAdvertising(
         endpointName,
         _strategy,
@@ -473,7 +473,7 @@ class TransferService {
     }
 
     try {
-      _advertising = await _startAdvOpen();
+      _advertising = await startAdvOpen();
     } on PlatformException catch (e) {
       final msg = e.message ?? '';
       if (msg.contains('STATUS_ALREADY_ADVERTISING')) {
@@ -482,7 +482,7 @@ class TransferService {
         );
         await _nearby.stopAdvertising();
         await Future.delayed(const Duration(milliseconds: 150));
-        _advertising = await _startAdvOpen();
+        _advertising = await startAdvOpen();
         _log('Open advertising restarted: $_advertising');
         return;
       }
@@ -504,7 +504,7 @@ class TransferService {
     }
     if (!await _ensurePermissionsForDiscover()) return;
     _log('Starting open discovery ...');
-    Future<bool> _start() async {
+    Future<bool> start() async {
       return await _nearby.startDiscovery(
         discovererName,
         _strategy,
@@ -703,7 +703,7 @@ class TransferService {
     }
 
     try {
-      _discovering = await _start();
+      _discovering = await start();
     } on PlatformException catch (e) {
       final msg = e.message ?? '';
       if (msg.contains('MISSING_PERMISSION_ACCESS_COARSE_LOCATION')) {
@@ -713,7 +713,7 @@ class TransferService {
         final locFine = await Permission.locationWhenInUse.request();
         final locCoarse = await Permission.location.request();
         if (locFine.isGranted || locCoarse.isGranted) {
-          _discovering = await _start();
+          _discovering = await start();
         } else {
           _log('Location permission not granted. Cannot discover.');
           return;
@@ -722,7 +722,7 @@ class TransferService {
         _log('Open discovery already active. Forcing stop and retry...');
         await _nearby.stopDiscovery();
         await Future.delayed(const Duration(milliseconds: 150));
-        _discovering = await _start();
+        _discovering = await start();
         _log('Open discovery restarted: $_discovering');
         return;
       } else {

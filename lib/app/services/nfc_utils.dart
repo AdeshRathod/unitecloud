@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
 class NfcUtils {
   /// Returns true if device has NFC hardware, false otherwise.
@@ -40,13 +41,14 @@ class NfcUtils {
     }
   }
 
-  static Future<bool> ensureNfcEnabled(BuildContext context) async {
+  // Avoid BuildContext across async gaps; use Get.dialog for prompts
+  static Future<bool> ensureNfcEnabled() async {
     if (Platform.isAndroid) {
       final bluetoothStatus = await Permission.bluetooth.status;
       if (bluetoothStatus.isDenied || bluetoothStatus.isPermanentlyDenied) {
         final result = await Permission.bluetooth.request();
         if (!result.isGranted) {
-          await _showEnableDialog(context);
+          await _showEnableDialog();
           return false;
         }
       }
@@ -59,36 +61,37 @@ class NfcUtils {
         return true;
       }
       if (enabled == false) {
-        await _showEnableDialog(context);
+        await _showEnableDialog();
         return false;
       }
     } catch (_) {}
     return true;
   }
 
-  static Future<void> _showEnableDialog(BuildContext context) async {
-    await showDialog(
-      context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Enable NFC'),
-            content: const Text(
-              'NFC is not enabled. Please enable it in system settings.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () async {
-                  await openNfcSettings();
-                  Navigator.of(ctx).pop();
-                },
-                child: const Text('Open NFC Settings'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel'),
-              ),
-            ],
+  static Future<void> _showEnableDialog() async {
+    await Get.dialog(
+      AlertDialog(
+        title: const Text('Enable NFC'),
+        content: const Text(
+          'NFC is not enabled. Please enable it in system settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await openNfcSettings();
+              if (Get.isOverlaysOpen) Get.back();
+            },
+            child: const Text('Open NFC Settings'),
           ),
+          TextButton(
+            onPressed: () {
+              if (Get.isOverlaysOpen) Get.back();
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+      barrierDismissible: true,
     );
   }
 }

@@ -16,7 +16,7 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   // Guard to prevent overlapping share flows
   bool _shareInProgress = false;
   String get contactJson => jsonEncode(_buildContact().toJson());
-  Future<void> shareByNearby(BuildContext context) async {
+  Future<void> shareByNearby() async {
     // Kept for backward compatibility: open Nearby sheet from the view.
     // No-op here or could be used to trigger default flow.
     if (!_validate()) return;
@@ -73,10 +73,7 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      final context = Get.context;
-      if (context != null) {
-        checkNfcEnabled(context);
-      }
+      checkNfcEnabled();
     }
   }
 
@@ -111,8 +108,8 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     }
   }
 
-  Future<void> checkNfcEnabled(BuildContext context) async {
-    final enabled = await NfcUtils.ensureNfcEnabled(context);
+  Future<void> checkNfcEnabled() async {
+    final enabled = await NfcUtils.ensureNfcEnabled();
     if (nfcEnabled.value != enabled) {
       nfcEnabled.value = enabled;
       _append(enabled ? 'NFC is now active.' : 'NFC is now disabled.');
@@ -164,9 +161,9 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   );
 
   // HCE: emulate a card to allow phone-to-phone via NFC
-  Future<void> startHceShare(BuildContext context) async {
+  Future<void> startHceShare() async {
     if (!_validate()) return;
-    await checkNfcEnabled(context);
+    await checkNfcEnabled();
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
       return;
@@ -186,9 +183,9 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     _append('HCE stopped.');
   }
 
-  Future<void> readFromPhoneViaHce(BuildContext context) async {
+  Future<void> readFromPhoneViaHce() async {
     debugPrint('[NFC] readFromPhoneViaHce: called');
-    await checkNfcEnabled(context);
+    await checkNfcEnabled();
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
       debugPrint('[NFC] readFromPhoneViaHce: NFC not enabled');
@@ -196,15 +193,13 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     }
     // Default quick read: shorter timeout/attempts to avoid long waits
     await _readFromPhoneViaHceInternal(
-      context,
       cardFirstMode: false,
       timeoutMs: 12000,
       attempts: 2,
     );
   }
 
-  Future<void> _readFromPhoneViaHceInternal(
-    BuildContext context, {
+  Future<void> _readFromPhoneViaHceInternal({
     bool cardFirstMode = false,
     int? timeoutMs,
     int? attempts,
@@ -228,7 +223,7 @@ class TransferController extends GetxController with WidgetsBindingObserver {
             debugPrint('[NFC] readFromPhoneViaHce: attempt $i got empty');
             if (i == tries) {
               nfcReadStatus.value = 'No NFC peer detected.';
-              _toast(context, 'No NFC peer detected. Please retry.');
+              _toast('No NFC peer detected. Please retry.');
               if (cardFirstMode) {
                 _lastCardFirstFailed = true;
                 debugPrint(
@@ -260,7 +255,7 @@ class TransferController extends GetxController with WidgetsBindingObserver {
           debugPrint('[NFC] readFromPhoneViaHce: attempt $i error: $e');
           if (i == tries) {
             nfcReadStatus.value = 'NFC read failed.';
-            _toast(context, 'NFC read failed: $e');
+            _toast('NFC read failed: $e');
             debugPrint(
               '[NFC] readFromPhoneViaHce: all attempts failed, stopping reader',
             );
@@ -294,10 +289,10 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   }
 
   // Retry only the reader while keeping HCE active
-  Future<void> retryNfcRead(BuildContext context) async {
+  Future<void> retryNfcRead() async {
     debugPrint('[NFC] retryNfcRead: called');
     if (isNfcReading.value) return; // already in progress
-    await checkNfcEnabled(context);
+    await checkNfcEnabled();
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
       debugPrint('[NFC] retryNfcRead: NFC not enabled');
@@ -314,13 +309,13 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     final jitterMs = 200 + Random().nextInt(600);
     await Future.delayed(Duration(milliseconds: jitterMs));
     debugPrint('[NFC] retryNfcRead: starting read after jitter');
-    await readFromPhoneViaHce(context);
+    await readFromPhoneViaHce();
   }
 
   // Unified phone-to-phone NFC share (both devices do this):
   // 1) Validate and set HCE payload (emulate card with my contact)
   // 2) Start reader once to pull peer's payload
-  Future<void> shareByNfcPhoneToPhone(BuildContext context) async {
+  Future<void> shareByNfcPhoneToPhone() async {
     debugPrint('[NFC] shareByNfcPhoneToPhone: called');
     if (_shareInProgress) {
       debugPrint('[NFC] shareByNfcPhoneToPhone: ignored (in-progress)');
@@ -332,7 +327,7 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     // Allow native to settle
     await Future.delayed(const Duration(milliseconds: 120));
     if (!_validate()) return;
-    await checkNfcEnabled(context);
+    await checkNfcEnabled();
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
       debugPrint('[NFC] shareByNfcPhoneToPhone: NFC not enabled');
@@ -390,7 +385,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
             (override == 'reader') ? 20000 : 8000; // shorter in auto
         final int tries = (override == 'reader') ? 3 : 2;
         await _readFromPhoneViaHceInternal(
-          context,
           cardFirstMode: false,
           timeoutMs: toMs,
           attempts: tries,
@@ -411,7 +405,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
         final int toMs = (override == 'card') ? 20000 : 8000; // shorter in auto
         final int tries = (override == 'card') ? 3 : 2;
         await _readFromPhoneViaHceInternal(
-          context,
           cardFirstMode: true,
           timeoutMs: toMs,
           attempts: tries,
@@ -419,19 +412,16 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       }
     } catch (e) {
       _append('Failed to start NFC HCE: $e');
-      _toast(context, 'Failed to start NFC: $e');
+      _toast('Failed to start NFC: $e');
       debugPrint('[NFC] shareByNfcPhoneToPhone: error $e');
     } finally {
       _shareInProgress = false;
     }
   }
 
-  void _toast(BuildContext context, String msg) {
-    try {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    } catch (_) {
-      // ignore UI errors
-    }
+  void _toast(String msg) {
+    // Context-free toast to avoid use_build_context_synchronously issues
+    Get.snackbar('Info', msg, snackPosition: SnackPosition.BOTTOM);
   }
 
   void _handleIncoming(String jsonStr) async {
@@ -488,7 +478,7 @@ class TransferController extends GetxController with WidgetsBindingObserver {
                       radius: 28,
                       backgroundColor: Theme.of(
                         sheetCtx,
-                      ).colorScheme.primary.withOpacity(0.15),
+                      ).colorScheme.primary.withValues(alpha: 0.15),
                       child: Text(
                         initials,
                         style: TextStyle(
