@@ -25,111 +25,175 @@ lib/
 		services/bluetooth_service.dart (Nearby wrapper)
 		modules/transfer/
 			transfer_binding.dart
-			transfer_controller.dart
-			transfer_view.dart
-	main.dart
-```
+			# UniteCloud Tap-to-Transfer
 
-## Dependencies
+			Share contact cards quickly between Android devices using three paths:
 
-Added to `pubspec.yaml`:
+			1) NFC phone-to-phone (HCE) – one device emulates a card, the other reads it.  
+			2) Nearby Connections (Bluetooth / Wi‑Fi Direct) – auto-discovery or manual code.  
+			3) QR – show your contact as a QR, or scan a QR to receive.
 
-- get – state management & DI
-- nearby_connections – offline P2P (Bluetooth / Wi‑Fi Direct)
-- permission_handler – runtime permission requests (Bluetooth & Location)
+			The app provides a clean UI, fast auto-mode, deterministic roles for NFC, and simple, human-readable logs.
 
-## Permissions & Platform Notes
+			## Features
 
-Android (API 26+) only for full feature set.
+			- NFC phone-to-phone via Host Card Emulation (HCE) with reader mode.
+			- Nearby Connections: Auto mode or 6-character manual code, bidirectional exchange.
+			- QR: Unified bottom sheet to Show QR and Scan QR.
+			- Deterministic NFC role selection (ANDOID_ID parity) with manual override.
+			- Human-friendly logs and graceful error handling (NFC disabled, permissions, cancel).
+			- Inline validation for Name/Phone/Email.
 
-Add / verify in `AndroidManifest.xml` (example – adjust for your min/target SDK):
+			## Project structure (relevant)
 
-```xml
-<uses-permission android:name="android.permission.NFC" />
-<uses-permission android:name="android.permission.BLUETOOTH" />
-<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-```
+			```
+			lib/
+				app/
+					data/models/contact.dart
+					modules/transfer/
+						transfer_binding.dart
+						transfer_controller.dart
+						transfer_view.dart
+					services/
+						bluetooth_service.dart      # Nearby wrapper (advertise/discover/send)
+						nfc_hce_service.dart        # Flutter API for native HCE/reader controls
+						nfc_utils.dart              # NFC availability/settings helpers (platform channel)
+						qr_share_service.dart       # QR generator and scanner widgets
+			main.dart
+			```
 
-For Android 12+ also consider adding `BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` with `usesPermissionFlags` as required by the Nearby library.
+			Notes on naming: `nfc_utils.dart` is a thin platform-channel gateway (open settings, check hardware/enabled). It behaves like a service. If you prefer strict separation, rename to `nfc_platform_service.dart` or move “utils” to a dedicated `utils/` folder and keep services focused on external integrations.
 
-On iOS: `nearby_connections` is not supported; NFC reading/writing limited by hardware & entitlements. This demo focuses on Android; guard code paths accordingly if expanding.
+			## Services overview
 
-## Architecture Overview
+			- NFC HCE (native-backed)
+				- File: `lib/app/services/nfc_hce_service.dart`
+				- What it does: Sets/clears HCE payload, disables reader, checks payload state (serve-once), and exposes a one-shot reader call. Thin Dart API over a native Android service.
 
-- `TransferController` orchestrates NFC HCE exchange and Nearby flows.
-- Deterministic NFC roles: devices pick reader/card deterministically using ANDROID_ID parity, with a manual override fallback internally after failures.
-- Native Android HCE service serves an APDU-based chunk protocol; the app runs reader mode to pull payload.
-- `TransferService` abstracts Nearby advertising, discovery, and payload sending.
-- A 6-character token (base32-like) identifies the temporary Nearby serviceId.
-- Logs aggregated for transparency & debugging.
+			- Nearby (Bluetooth/Wi‑Fi)
+				- File: `lib/app/services/bluetooth_service.dart` (class `TransferService`)
+				- What it does: Advertise/discover, connect, auto-send payloads, handle permissions and retries, log human-readable events.
 
-### Data Flow (NFC HCE)
+			- QR
+				- File: `lib/app/services/qr_share_service.dart`
+				- What it does: Generate QR from contact JSON; scanner widget that returns scanned data.
 
-```
-Both devices tap Share by NFC -> each sets HCE payload with its contact -> a deterministic rule picks which reads first -> reader connects and pulls chunks -> JSON parsed -> Contact saved
-```
+			## Native Android (HCE) service
 
-### Data Flow (Nearby)
+			Why native: NFC phone-to-phone requires one phone to emulate a tag. We implement a HostApduService that:
 
-```
-Auto: both tap Start -> advertise+discover -> connect -> exchange payloads.
-Manual: one gets 6-char code -> other enters code -> connect -> exchange payloads.
-```
+			- Responds to SELECT AID and serves the contact JSON in chunks via a simple APDU protocol.
+			- Clears (serve-once) payload after the last chunk or EOF, keeping HCE safely idle.
+			- Works with a reader built on IsoDep that supports:
+				- Reconnect and reselect on errors (e.g., 6A82) and “Tag was lost”.
+				- Tuned timeouts and small backoffs to improve reliability.
+				- Deterministic roles with optional override to reduce collisions.
 
-## Testing Plan
+			Platform channel (MethodChannel: `nfc_utils`) methods exposed to Flutter:
 
-1. Launch app on two Android NFC-capable devices.
-2. Sender enters contact (small payload) <= 1.8 KB -> Tap: ensure receiver logs receipt & contact appears.
-3. Modify code temporarily to pad JSON > 2 KB -> Tap: confirm token path: receiver first logs token, then after Nearby connection full payload arrives.
-4. Turn off NFC on receiver -> attempt share -> ensure proper availability log.
-5. Deny Bluetooth / Location permission -> verify graceful failure messages (Nearby sender/receiver fail cleanly, logs show the reason).
-6. For NFC HCE, align backs of phones; if both try to read, the deterministic role prevents collisions.
-7. Start NFC read and press Cancel -> the read stops, log shows "NFC read canceled" and UI returns to idle; Try again re-arms and retries.
-8. Leave NFC off and press Share by NFC -> app prompts and logs "NFC is not enabled or not available."
+			- hasNfcHardware(): bool
+			- isNfcEnabled(): bool
+			- openNfcSettings(): void
+			- getAndroidId(): String
+			- hceSetPayload({bytes}): void
+			- hceClear(): void
+			- hceDisableReader(): void
+			- hceHasPayload(): bool
+			- hceReadOnce({timeoutMs}): String? (JSON)
 
-## Limitations
+			Flutter-side wrappers:
 
-- Nearby Connections: Android only.
-- NFC HCE phone-to-phone varies by OEM; timings and chunk sizes tuned conservatively.
-- No persistent storage (in-memory list only) – consider Hive/SQLite for production.
-- No encryption / security handshake; suitable only for demo or non-sensitive data.
-- Error handling simplified; production should handle more edge cases (timeouts, partial transfers).
+			- `NfcHceService` – wraps set/clear/disable/hasPayload.
+			- `TransferController._readFromPhoneViaHceInternal` – calls `hceReadOnce` and handles retries/backoff.
+			- `NfcUtils` – guard rails for NFC hardware/enabled and opening settings.
 
-## Future Enhancements
+			## Architecture
 
-- Add persistent storage layer.
-- Encrypt payloads with a shared secret derived from token.
-- Add progress indicators for Nearby transfer.
-- Support multiple simultaneous discovery attempts.
-- iOS conditional compilation & CoreNFC wrappers.
+			- `TransferController` orchestrates NFC HCE and Nearby flows, manages UI state, validates inputs, and aggregates user-friendly logs.
+			- Deterministic role selection: ANDROID_ID parity decides reader/card; manual override available in UI.
+			- Auto mode optimized with short windows and backoffs to reduce collisions.
+			- Logs: Technical details remain in debug logs; the UI shows short, readable messages.
 
-## Running
+			### Data flows
 
-Ensure Flutter SDK (3.x) and run:
+			NFC (HCE):
 
-```
-flutter pub get
-flutter run
-```
+			```
+			Both devices tap Share by NFC → both set HCE payload → deterministic rule selects who reads first → reader pulls chunks via IsoDep → JSON parsed → preview & save
+			```
 
-Tap two devices together (screen on, NFC enabled). On large payload test scenario, observe token handshake logs.
+			Nearby:
 
-Expected log examples:
-- NFC active. Bring the other phone close to read.
-- NFC HCE ready. Bring the other phone close to exchange.
-- HCE read attempt 1/2 ... Bring phones together.
-- Received 512 bytes / Contact saved: Alice
-- NFC read canceled.
-- Nearby: advertising started / connection initiated / payload 384 bytes sent.
+			```
+			Auto: both tap Start → advertise + discover → connect → exchange payloads.
+			Manual: one taps Get code → other enters code → connect → exchange payloads.
+			```
 
-## Troubleshooting
+			QR:
 
-- If NFC sessions fail repeatedly, ensure no other NFC app is in foreground (e.g., Google Pay).
-- If Nearby discovery fails: toggle Bluetooth & Location; ensure permissions are granted.
-- Use `adb logcat` filtering `[NFC]` or `[Nearby]` for deeper diagnostics.
+			```
+			Open QR bottom sheet → Show QR (share) or Scan QR (receive) → preview & save.
+			```
 
----
+			## Services vs Utils (best practice)
 
-MIT-style license or internal usage only (adjust as needed).
+			- Services: Integrate with platforms/frameworks (NFC, Nearby, camera). They may have side effects, permissions, and lifecycle handling.
+			- Utils: Pure functions/helpers without side effects (formatting, parsing). No platform state or permissions.
+
+			Where should `NfcUtils` live? It talks to a platform channel and opens system settings; that’s service-like behavior. It is acceptable in `services/`. If you want stricter boundaries:
+
+			- Option A: Rename to `nfc_platform_service.dart` and keep in `services/`.
+			- Option B: Split pure helpers (if any) to `utils/`, and keep platform calls in a service file.
+
+			Also consider keeping Bluetooth/Location permission checks in the Nearby service (not the NFC utility) to avoid mixing concerns.
+
+			## Permissions & Platform Notes
+
+			Android (API 26+) for full feature set.
+
+			AndroidManifest (adjust to your min/target):
+
+			```xml
+			<uses-permission android:name="android.permission.NFC" />
+			<uses-permission android:name="android.permission.BLUETOOTH" />
+			<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+			<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+			<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+			<!-- Android 12+ -->
+			<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+			<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+			<!-- Android 13+ -->
+			<uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+			```
+
+			iOS: `nearby_connections` is not supported. NFC is limited by CoreNFC and entitlements; this demo targets Android.
+
+			## Testing
+
+			1) Two Android NFC-capable devices, screen on, NFC enabled.  
+			2) Enter contact, Share by NFC → other device should receive contact.  
+			3) Auto Nearby: both tap Start → confirm connection and exchange.  
+			4) Manual Nearby: one gets a code, the other enters it → exchange.  
+			5) QR: open QR sheet → Show QR on one, Scan QR on the other → preview & save.  
+			6) Disable NFC and try Share by NFC → app prompts to enable and logs a simple message.  
+			7) Deny Bluetooth/Location permissions and try Nearby → graceful failure with concise logs.
+
+			## Limitations
+
+			- Nearby Connections is Android-only.
+			- NFC HCE behavior/timings vary by OEM; chunk and timeout tuning is conservative.
+			- Contacts stored in-memory only (no persistence). Consider Hive/SQLite.
+			- No crypto/handshake; use only for non-sensitive payloads or extend with encryption.
+
+			## Run
+
+			```
+			flutter pub get
+			flutter run
+			```
+
+			Tips: If NFC sessions fail repeatedly, ensure no wallet app is in foreground. For Nearby, toggle Bluetooth/Location or re-grant permissions if needed. Use `adb logcat` and filter `[NFC]` / `[Nearby]` for deep diagnostics.
+
+			---
+
+			MIT-style license or internal usage only (adjust as needed).
