@@ -156,7 +156,6 @@ class TransferView extends StatelessWidget {
                 }
                 return const SizedBox.shrink();
               }),
-              // Replace plain TextFields with Obx-wrapped fields to show errorText
               Obx(
                 () => TextField(
                   controller: controller.nameController,
@@ -659,7 +658,6 @@ class TransferView extends StatelessWidget {
                                       height: 360,
                                       child: TabBarView(
                                         children: [
-                                          // Show QR tab
                                           Builder(
                                             builder: (_) {
                                               final hasContact =
@@ -697,7 +695,6 @@ class TransferView extends StatelessWidget {
                                               );
                                             },
                                           ),
-                                          // Scan QR tab
                                           ClipRRect(
                                             borderRadius: BorderRadius.circular(
                                               12,
@@ -736,7 +733,6 @@ class TransferView extends StatelessWidget {
                   ),
                 ],
               ),
-              // Removed separate Scan QR button; combined in the QR bottom sheet above.
               const SizedBox(height: 16),
               const Text(
                 'Logs:',

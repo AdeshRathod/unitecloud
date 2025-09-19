@@ -138,7 +138,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
 
   void _appendNearbyFriendly(String raw) {
     final lc = raw.toLowerCase();
-    // Success events
     if (lc.contains('payload received')) {
       _append('Contact received.');
       return;
@@ -151,20 +150,17 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       _append('Nearby connected.');
       return;
     }
-    // Stop/cleanup
     if (lc.startsWith('stopped advertising') ||
         lc.startsWith('stopped discovering')) {
       _append('Nearby stopped.');
       return;
     }
-    // Errors
     if (lc.contains('failed') ||
         lc.contains('cannot') ||
         lc.contains('missing permission')) {
       _append('Nearby failed.');
       return;
     }
-    // Ignore verbose/internal messages (advertising/discovery started, endpoints, retries, etc.)
   }
 
   bool _validate() {
