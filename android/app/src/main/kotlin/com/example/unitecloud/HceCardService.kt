@@ -45,10 +45,16 @@ class HceCardService : HostApduService() {
             val payload = HceDataStore.get() ?: return SW_NOT_FOUND
             val offset = chunkIndex * HceDataStore.MAX_CHUNK
             if (offset >= payload.size) {
+                // Reader requested beyond available data; treat as EOF and clear payload to serve-once.
+                HceDataStore.clear()
                 return SW_OK
             }
             val end = minOf(payload.size, offset + HceDataStore.MAX_CHUNK)
             val slice = payload.copyOfRange(offset, end)
+            // If this is the last chunk, clear payload after producing slice so next attempt requires re-arming.
+            if (end >= payload.size) {
+                HceDataStore.clear()
+            }
             return slice + SW_OK
         }
 

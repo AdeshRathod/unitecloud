@@ -15,4 +15,13 @@ class NfcHceService {
   static Future<void> clear() async {
     await _ch.invokeMethod('hceClear');
   }
+
+  static Future<void> disableReader() async {
+    await _ch.invokeMethod('hceDisableReader');
+  }
+
+  static Future<bool> hasPayload() async {
+    final v = await _ch.invokeMethod<bool>('hceHasPayload');
+    return v ?? false;
+  }
 }

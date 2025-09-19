@@ -6,12 +6,15 @@ import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../data/models/contact.dart';
-import '../../services/nfc_service.dart';
 import '../../services/nfc_hce_service.dart';
 import '../../services/nfc_utils.dart';
 import '../../services/bluetooth_service.dart';
 
 class TransferController extends GetxController with WidgetsBindingObserver {
+  // Track if last cardFirst attempt failed, to force reader on next try
+  bool _lastCardFirstFailed = false;
+  // Guard to prevent overlapping share flows
+  bool _shareInProgress = false;
   String get contactJson => jsonEncode(_buildContact().toJson());
   Future<void> shareByNearby(BuildContext context) async {
     // Kept for backward compatibility: open Nearby sheet from the view.
@@ -53,9 +56,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     _nearbyLogSub = transferService.logs.listen((msg) {
       _append('Nearby: $msg');
     });
-    _nfcLogSub = nfcService.logs.listen((msg) {
-      _append('NFC: $msg');
-    });
   }
 
   @override
@@ -64,10 +64,8 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     nameController.dispose();
     phoneController.dispose();
     emailController.dispose();
-    nfcService.dispose();
     stopNearby();
     _nearbyLogSub?.cancel();
-    _nfcLogSub?.cancel();
     transferService.dispose();
     super.onClose();
   }
@@ -82,10 +80,8 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     }
   }
 
-  final NfcService nfcService;
   final TransferService transferService;
-
-  TransferController({required this.nfcService, required this.transferService});
+  TransferController({required this.transferService});
 
   final name = 'Adesh'.obs;
   final phone = '9307015431'.obs;
@@ -93,19 +89,19 @@ class TransferController extends GetxController with WidgetsBindingObserver {
 
   final log = ''.obs;
   final contacts = <Contact>[].obs;
-  final listening = false.obs;
   final nfcEnabled = true.obs;
   final hceActive = false.obs;
   // UI: NFC reading progress/state
   final isNfcReading = false.obs;
   final nfcReadStatus = ''.obs;
+  // Manual override for NFC role selection: 'auto' | 'reader' | 'card'
+  final nfcRoleOverride = 'auto'.obs;
 
   // Nearby state
   final nearbyActive = false.obs;
   final nearbyMode = ''.obs; // 'auto' | 'sender' | 'receiver'
   final advertisingToken = RxnString();
   StreamSubscription<String>? _nearbyLogSub;
-  StreamSubscription<String>? _nfcLogSub;
 
   Future<void> checkNfcEnabledSilent() async {
     final enabled = await NfcUtils.isNfcEnabled();
@@ -167,32 +163,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     email: email.value.trim(),
   );
 
-  Future<void> shareByTap(BuildContext context) async {
-    if (!_validate()) return;
-    await checkNfcEnabled(context);
-    if (!nfcEnabled.value) {
-      _append('NFC is not enabled or not available.');
-      return;
-    }
-    final contact = _buildContact();
-    final jsonStr = jsonEncode(contact.toJson());
-    final bytes = utf8.encode(jsonStr);
-    _append('Prepared contact (${bytes.length} bytes).');
-    if (bytes.length <= 1800) {
-      _append('Using direct NFC write.');
-      await nfcService.startWriting(jsonStr);
-    } else {
-      final token = _generateToken();
-      _append('Payload large; using token handshake token=$token');
-      await transferService.advertise(
-        'unitecloud-sender',
-        token,
-        payloadToSend: jsonStr,
-      );
-      await nfcService.startWriting(token);
-    }
-  }
-
   // HCE: emulate a card to allow phone-to-phone via NFC
   Future<void> startHceShare(BuildContext context) async {
     if (!_validate()) return;
@@ -217,12 +187,20 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> readFromPhoneViaHce(BuildContext context) async {
+    debugPrint('[NFC] readFromPhoneViaHce: called');
     await checkNfcEnabled(context);
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
+      debugPrint('[NFC] readFromPhoneViaHce: NFC not enabled');
       return;
     }
-    // Try up to 2 attempts to account for race/timing issues
+    await _readFromPhoneViaHceInternal(context, cardFirstMode: false);
+  }
+
+  Future<void> _readFromPhoneViaHceInternal(
+    BuildContext context, {
+    bool cardFirstMode = false,
+  }) async {
     final channel = const MethodChannel('nfc_utils');
     const attempts = 3;
     isNfcReading.value = true;
@@ -230,45 +208,100 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     try {
       for (int i = 1; i <= attempts; i++) {
         try {
+          debugPrint('[NFC] readFromPhoneViaHce: attempt $i');
           nfcReadStatus.value = 'Reading via NFC (attempt $i of $attempts)…';
           _append('HCE read attempt $i/$attempts ... Bring phones together.');
           final data = await channel.invokeMethod<String>('hceReadOnce', {
-            'timeoutMs': 20000,
+            'timeoutMs': 25000,
           });
           if (data == null || data.isEmpty) {
             _append('HCE read returned empty.');
+            debugPrint('[NFC] readFromPhoneViaHce: attempt $i got empty');
             if (i == attempts) {
               nfcReadStatus.value = 'No NFC peer detected.';
               _toast(context, 'No NFC peer detected. Please retry.');
+              if (cardFirstMode) {
+                _lastCardFirstFailed = true;
+                debugPrint(
+                  '[NFC] readFromPhoneViaHce: cardFirstMode failed, will force reader next time',
+                );
+              }
             }
             continue;
           }
           _append('HCE read ${data.length} bytes.');
           nfcReadStatus.value = 'Received ${data.length} bytes';
+          // Keep HCE armed so the peer can read our contact after we received theirs.
+          // Native HCE will clear automatically after serving to the peer.
+          debugPrint('[NFC] readFromPhoneViaHce: keeping HCE active for peer');
+          debugPrint(
+            '[NFC] readFromPhoneViaHce: attempt $i success, stopping reader',
+          );
+          await NfcHceService.disableReader();
           _handleIncoming(data);
+          // Refresh HCE active banner based on serve-once native state
+          try {
+            final has = await NfcHceService.hasPayload();
+            hceActive.value = has;
+            if (!has) _append('NFC payload served; HCE now idle.');
+          } catch (_) {}
+          // Optional: if we were reader-first and override is auto, try a quick reciprocal read
+          // so both sides exchange on a single action when close together.
+          try {
+            final overrideNow = nfcRoleOverride.value;
+            if (overrideNow == 'auto') {
+              await Future.delayed(const Duration(milliseconds: 250));
+              debugPrint('[NFC] reciprocal read kick-off (auto)');
+              await _readFromPhoneViaHceInternal(context, cardFirstMode: false);
+            }
+          } catch (_) {}
           return;
         } catch (e) {
           _append('HCE read error on attempt $i: $e');
+          debugPrint('[NFC] readFromPhoneViaHce: attempt $i error: $e');
           if (i == attempts) {
             nfcReadStatus.value = 'NFC read failed.';
             _toast(context, 'NFC read failed: $e');
+            debugPrint(
+              '[NFC] readFromPhoneViaHce: all attempts failed, stopping reader',
+            );
+            await NfcHceService.disableReader();
+            if (cardFirstMode) {
+              _lastCardFirstFailed = true;
+              debugPrint(
+                '[NFC] readFromPhoneViaHce: cardFirstMode failed, will force reader next time',
+              );
+            }
           } else {
             nfcReadStatus.value = 'Retrying…';
-            await Future.delayed(const Duration(milliseconds: 300));
+            // Backoff based on error type to avoid thrash
+            final msg = e.toString();
+            int delayMs = 300;
+            if (msg.contains('BUSY') || msg.contains('CANCELLED')) {
+              delayMs = 350 + Random().nextInt(200); // 350–550ms
+            } else if (msg.contains('READ') || msg.contains('Tag was lost')) {
+              delayMs = 250 + Random().nextInt(200); // 250–450ms
+            }
+            await Future.delayed(Duration(milliseconds: delayMs));
           }
         }
       }
     } finally {
       isNfcReading.value = false;
+      debugPrint(
+        '[NFC] readFromPhoneViaHce: finally block, isNfcReading set to false',
+      );
     }
   }
 
   // Retry only the reader while keeping HCE active
   Future<void> retryNfcRead(BuildContext context) async {
+    debugPrint('[NFC] retryNfcRead: called');
     if (isNfcReading.value) return; // already in progress
     await checkNfcEnabled(context);
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
+      debugPrint('[NFC] retryNfcRead: NFC not enabled');
       return;
     }
     // Ensure HCE is still armed if user stopped it inadvertently
@@ -276,10 +309,12 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       await NfcHceService.setPayload(contactJson);
       hceActive.value = true;
       _append('Re-armed NFC HCE for retry.');
+      debugPrint('[NFC] retryNfcRead: re-armed HCE');
     }
     // Small jitter to reduce collisions if both tap Try again simultaneously
     final jitterMs = 200 + Random().nextInt(600);
     await Future.delayed(Duration(milliseconds: jitterMs));
+    debugPrint('[NFC] retryNfcRead: starting read after jitter');
     await readFromPhoneViaHce(context);
   }
 
@@ -287,27 +322,32 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   // 1) Validate and set HCE payload (emulate card with my contact)
   // 2) Start reader once to pull peer's payload
   Future<void> shareByNfcPhoneToPhone(BuildContext context) async {
+    debugPrint('[NFC] shareByNfcPhoneToPhone: called');
+    if (_shareInProgress) {
+      debugPrint('[NFC] shareByNfcPhoneToPhone: ignored (in-progress)');
+      return;
+    }
+    _shareInProgress = true;
+    // Always stop any previous reader before starting a new share
+    await NfcHceService.disableReader();
+    // Allow native to settle
+    await Future.delayed(const Duration(milliseconds: 120));
     if (!_validate()) return;
     await checkNfcEnabled(context);
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
+      debugPrint('[NFC] shareByNfcPhoneToPhone: NFC not enabled');
       return;
     }
     try {
       await NfcHceService.setPayload(contactJson);
       hceActive.value = true;
       _append('NFC HCE ready. Bring the other phone close to exchange.');
-      // Auto-clear HCE after 30s to avoid staying active indefinitely
-      unawaited(
-        Future<void>.delayed(const Duration(seconds: 30)).then((_) async {
-          await NfcHceService.clear();
-          _append('NFC HCE auto-cleared after 30s.');
-          hceActive.value = false;
-          // Also clear reading UI just in case
-          isNfcReading.value = false;
-          nfcReadStatus.value = '';
-        }),
+      debugPrint(
+        '[NFC] shareByNfcPhoneToPhone: HCE payload set, hceActive true',
       );
+      // No fixed auto-clear: the native HCE clears the payload after serving the
+      // final chunk (serve-once). User can stop manually if desired.
       // Deterministic role selection to avoid both reading at once:
       // Derive parity from ANDROID_ID hash: even -> reader-first, odd -> card-first.
       final channel = const MethodChannel('nfc_utils');
@@ -316,20 +356,59 @@ class TransferController extends GetxController with WidgetsBindingObserver {
         deviceId = await channel.invokeMethod<String>('getAndroidId') ?? '';
       } catch (_) {}
       final hash = deviceId.hashCode;
-      final readerFirst = (hash & 1) == 0;
+      // Fallback: if last attempt in card-first mode failed, force reader this time
+      // but only if our deterministic hash says we'd otherwise be card (odd).
+      bool forceReader = false;
+      if (_lastCardFirstFailed) {
+        if ((hash & 1) == 1) {
+          forceReader = true; // flip to reader only for odd hash
+        }
+        _lastCardFirstFailed = false;
+      }
+
+      // Apply manual override if set by the user
+      final override = nfcRoleOverride.value;
+      bool? overrideReaderFirst;
+      if (override == 'reader') overrideReaderFirst = true;
+      if (override == 'card') overrideReaderFirst = false;
+
+      final readerFirst =
+          overrideReaderFirst ?? (forceReader || ((hash & 1) == 0));
+      debugPrint(
+        '[NFC] role: deviceId=$deviceId hash=$hash override=$override forceReader=$forceReader readerFirst=$readerFirst',
+      );
       if (readerFirst) {
-        // Small jitter then try reading immediately
-        final jitterMs = 200 + Random().nextInt(400);
-        await Future.delayed(Duration(milliseconds: jitterMs));
-        await readFromPhoneViaHce(context);
+        // Small jitter then try reading immediately. If user explicitly chose 'reader',
+        // wait a little longer to allow the other phone to arm HCE first.
+        final readerDelayMs =
+            (override == 'reader')
+                ? 1000 +
+                    Random().nextInt(500) // 1000–1500ms
+                : 200 + Random().nextInt(400); // 200–600ms
+        await Future.delayed(Duration(milliseconds: readerDelayMs));
+        debugPrint('[NFC] shareByNfcPhoneToPhone: readerFirst, starting read');
+        await _readFromPhoneViaHceInternal(context, cardFirstMode: false);
       } else {
-        // Prefer to serve first: give peer time to read for 1500 ms, then try reading
-        await Future.delayed(const Duration(milliseconds: 1500));
-        await readFromPhoneViaHce(context);
+        // Prefer to serve first: give peer ample time to read, then try reading
+        // Increased delay to reduce collisions if both default to card-first.
+        // But if explicitly overridden to 'card', use a short delay since the peer should be 'reader'.
+        final delayMs =
+            (override == 'card')
+                ? 4000 +
+                    Random().nextInt(1500) // 4000–5500ms
+                : 2000 + Random().nextInt(500); // 2000–2500ms
+        await Future.delayed(Duration(milliseconds: delayMs));
+        debugPrint(
+          '[NFC] shareByNfcPhoneToPhone: cardFirst, starting read after delay',
+        );
+        await _readFromPhoneViaHceInternal(context, cardFirstMode: true);
       }
     } catch (e) {
       _append('Failed to start NFC HCE: $e');
       _toast(context, 'Failed to start NFC: $e');
+      debugPrint('[NFC] shareByNfcPhoneToPhone: error $e');
+    } finally {
+      _shareInProgress = false;
     }
   }
 
@@ -339,39 +418,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     } catch (_) {
       // ignore UI errors
     }
-  }
-
-  Future<void> listenForTap(BuildContext context) async {
-    if (listening.value) {
-      _append('Already listening.');
-      return;
-    }
-    await checkNfcEnabled(context);
-    if (!nfcEnabled.value) {
-      _append('NFC is not enabled or not available.');
-      return;
-    }
-    listening.value = true;
-    _append('Listening for NFC tap ...');
-    await nfcService.startReading(
-      onPayload: (data) async {
-        _append(
-          'NFC payload received: ${data.substring(0, data.length.clamp(0, 120))}${data.length > 120 ? '...' : ''}',
-        );
-        if (_looksLikeToken(data)) {
-          _append('Detected token; starting discovery.');
-          await transferService.discover(
-            data,
-            onPayload: (full) {
-              _handleIncoming(full);
-            },
-          );
-        } else {
-          _handleIncoming(data);
-        }
-      },
-    );
-    listening.value = false;
   }
 
   void _handleIncoming(String jsonStr) async {
@@ -537,10 +583,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final rnd = Random.secure();
     return List.generate(6, (_) => chars[rnd.nextInt(chars.length)]).join();
-  }
-
-  bool _looksLikeToken(String input) {
-    return RegExp(r'^[A-Z0-9]{6}$').hasMatch(input.trim());
   }
 
   Contact? parseScannedPayload(String data) {
