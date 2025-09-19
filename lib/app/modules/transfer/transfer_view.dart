@@ -20,6 +20,105 @@ class TransferView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // HCE Active banner
+              Obx(() {
+                if (controller.hceActive.value) {
+                  return Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.green.shade300),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.nfc, color: Colors.green),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'NFC active: Hold phones together to exchange contacts',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            await controller.stopHceShare();
+                          },
+                          child: const Text('Stop'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              }),
+              // NFC reading progress
+              Obx(() {
+                if (controller.isNfcReading.value ||
+                    (controller.nfcReadStatus.value.isNotEmpty)) {
+                  return Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child:
+                              controller.isNfcReading.value
+                                  ? const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  )
+                                  : const Icon(
+                                    Icons.info_outline,
+                                    size: 18,
+                                    color: Colors.blue,
+                                  ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            controller.nfcReadStatus.value.isEmpty
+                                ? 'Reading via NFC…'
+                                : controller.nfcReadStatus.value,
+                            style: const TextStyle(color: Colors.blue),
+                          ),
+                        ),
+                        if (controller.isNfcReading.value)
+                          TextButton(
+                            onPressed: () async {
+                              await controller.stopHceShare();
+                            },
+                            child: const Text('Cancel'),
+                          ),
+                        if (!controller.isNfcReading.value &&
+                            controller.hceActive.value)
+                          TextButton(
+                            onPressed: () async {
+                              await controller.retryNfcRead(context);
+                            },
+                            child: const Text('Try again'),
+                          ),
+                      ],
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              }),
               Obx(() {
                 if (!controller.hasNfc.value) {
                   return Container(
@@ -80,13 +179,15 @@ class TransferView extends StatelessWidget {
                 spacing: 12,
                 runSpacing: 8,
                 children: [
-                  // NFC Share
+                  // NFC Share (phone-to-phone unified)
                   Obx(
                     () =>
                         controller.hasNfc.value
                             ? ElevatedButton.icon(
                               onPressed: () async {
-                                await controller.shareByTap(context);
+                                await controller.shareByNfcPhoneToPhone(
+                                  context,
+                                );
                               },
                               icon: const Icon(Icons.nfc),
                               label: const Text('Share by NFC'),
@@ -258,8 +359,9 @@ class TransferView extends StatelessWidget {
                                         (controller.advertisingToken.value ??
                                                 '')
                                             .isNotEmpty;
-                                    if (!showCode)
+                                    if (!showCode) {
                                       return const SizedBox.shrink();
+                                    }
                                     final code =
                                         controller.advertisingToken.value!;
                                     return Card(
@@ -523,19 +625,6 @@ class TransferView extends StatelessWidget {
                 spacing: 12,
                 runSpacing: 8,
                 children: [
-                  // NFC Listen
-                  Obx(
-                    () =>
-                        controller.hasNfc.value
-                            ? ElevatedButton.icon(
-                              onPressed: () async {
-                                await controller.listenForTap(context);
-                              },
-                              icon: const Icon(Icons.sensors),
-                              label: const Text('Listen for Tap'),
-                            )
-                            : const SizedBox.shrink(),
-                  ),
                   // QR Code Scan
                   ElevatedButton.icon(
                     onPressed: () async {
@@ -554,228 +643,9 @@ class TransferView extends StatelessWidget {
                                         .parseScannedPayload(data);
                                     if (contact == null) return;
 
-                                    // Present a modern contact card bottom sheet
-                                    // with avatar initials and Save action
-                                    // Use parent context to show the sheet
-                                    // ignore: use_build_context_synchronously
-                                    await showModalBottomSheet(
-                                      context: context,
-                                      isScrollControlled: true,
-                                      shape: const RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.vertical(
-                                          top: Radius.circular(16),
-                                        ),
-                                      ),
-                                      builder: (sheetCtx) {
-                                        final name = contact.name.trim();
-                                        final initials =
-                                            name.isNotEmpty
-                                                ? name
-                                                    .split(RegExp(r'\s+'))
-                                                    .where((p) => p.isNotEmpty)
-                                                    .map((p) => p[0])
-                                                    .take(2)
-                                                    .join()
-                                                    .toUpperCase()
-                                                : 'UC';
-                                        return SafeArea(
-                                          child: Padding(
-                                            padding: EdgeInsets.only(
-                                              left: 16,
-                                              right: 16,
-                                              bottom:
-                                                  MediaQuery.of(
-                                                    sheetCtx,
-                                                  ).viewInsets.bottom +
-                                                  16,
-                                              top: 16,
-                                            ),
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.stretch,
-                                              children: [
-                                                Row(
-                                                  children: [
-                                                    CircleAvatar(
-                                                      radius: 28,
-                                                      backgroundColor: Theme.of(
-                                                            sheetCtx,
-                                                          ).colorScheme.primary
-                                                          .withOpacity(0.15),
-                                                      child: Text(
-                                                        initials,
-                                                        style: TextStyle(
-                                                          fontWeight:
-                                                              FontWeight.w700,
-                                                          color:
-                                                              Theme.of(sheetCtx)
-                                                                  .colorScheme
-                                                                  .primary,
-                                                          fontSize: 20,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 16),
-                                                    Expanded(
-                                                      child: Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          Text(
-                                                            contact.name,
-                                                            style: Theme.of(
-                                                                  sheetCtx,
-                                                                )
-                                                                .textTheme
-                                                                .titleLarge
-                                                                ?.copyWith(
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w700,
-                                                                ),
-                                                          ),
-                                                          const SizedBox(
-                                                            height: 4,
-                                                          ),
-                                                          Text(
-                                                            'New contact',
-                                                            style: Theme.of(
-                                                                  sheetCtx,
-                                                                )
-                                                                .textTheme
-                                                                .bodySmall
-                                                                ?.copyWith(
-                                                                  color:
-                                                                      Colors
-                                                                          .grey[600],
-                                                                ),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                                const SizedBox(height: 16),
-                                                Card(
-                                                  elevation: 0,
-                                                  color: Theme.of(sheetCtx)
-                                                      .colorScheme
-                                                      .surfaceContainerHighest
-                                                      .withValues(alpha: 0.5),
-                                                  shape: RoundedRectangleBorder(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          12,
-                                                        ),
-                                                  ),
-                                                  child: Padding(
-                                                    padding:
-                                                        const EdgeInsets.all(
-                                                          12.0,
-                                                        ),
-                                                    child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      children: [
-                                                        Row(
-                                                          children: [
-                                                            const Icon(
-                                                              Icons.phone,
-                                                              size: 20,
-                                                            ),
-                                                            const SizedBox(
-                                                              width: 8,
-                                                            ),
-                                                            Expanded(
-                                                              child: Text(
-                                                                contact.phone,
-                                                                style:
-                                                                    Theme.of(
-                                                                          sheetCtx,
-                                                                        )
-                                                                        .textTheme
-                                                                        .bodyMedium,
-                                                              ),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                        const SizedBox(
-                                                          height: 8,
-                                                        ),
-                                                        Row(
-                                                          children: [
-                                                            const Icon(
-                                                              Icons
-                                                                  .email_outlined,
-                                                              size: 20,
-                                                            ),
-                                                            const SizedBox(
-                                                              width: 8,
-                                                            ),
-                                                            Expanded(
-                                                              child: Text(
-                                                                contact.email,
-                                                                style:
-                                                                    Theme.of(
-                                                                          sheetCtx,
-                                                                        )
-                                                                        .textTheme
-                                                                        .bodyMedium,
-                                                              ),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 12),
-                                                Row(
-                                                  children: [
-                                                    Expanded(
-                                                      child: OutlinedButton(
-                                                        onPressed:
-                                                            () =>
-                                                                Navigator.of(
-                                                                  sheetCtx,
-                                                                ).pop(),
-                                                        child: const Text(
-                                                          'Cancel',
-                                                        ),
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 12),
-                                                    Expanded(
-                                                      child:
-                                                          ElevatedButton.icon(
-                                                            icon: const Icon(
-                                                              Icons
-                                                                  .save_rounded,
-                                                            ),
-                                                            onPressed: () {
-                                                              controller
-                                                                  .saveContact(
-                                                                    contact,
-                                                                  );
-                                                              Navigator.of(
-                                                                sheetCtx,
-                                                              ).pop();
-                                                            },
-                                                            label: const Text(
-                                                              'Save contact',
-                                                            ),
-                                                          ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      },
+                                    // Reuse controller's preview sheet for consistency
+                                    await controller.presentContactPreview(
+                                      contact,
                                     );
                                   },
                                 ),
@@ -811,7 +681,7 @@ class TransferView extends StatelessWidget {
                   decoration: BoxDecoration(
                     border: Border.all(color: Colors.grey.shade400),
                     borderRadius: BorderRadius.circular(6),
-                    color: Colors.black.withOpacity(0.04),
+                    color: Colors.black.withValues(alpha: 0.04),
                   ),
                   child: SingleChildScrollView(
                     reverse: true,

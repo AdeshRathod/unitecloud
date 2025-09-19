@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.NFC" />
-    <uses-feature android:name="android.hardware.nfc" android:required="true" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
     <!-- Bluetooth permissions (Android 12+ uses new granular permissions) -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
@@ -22,6 +22,18 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true">
+        <service
+            android:name=".HceCardService"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/apduservice" />
+        </service>
         <activity
             android:name=".MainActivity"
             android:exported="true"
