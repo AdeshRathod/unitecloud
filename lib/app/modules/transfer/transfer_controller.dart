@@ -308,10 +308,25 @@ class TransferController extends GetxController with WidgetsBindingObserver {
           nfcReadStatus.value = '';
         }),
       );
-      // Stagger the reader start to reduce both devices acting as reader simultaneously
-      final jitterMs = 200 + Random().nextInt(600); // 200-800ms
-      await Future.delayed(Duration(milliseconds: jitterMs));
-      await readFromPhoneViaHce(context);
+      // Deterministic role selection to avoid both reading at once:
+      // Derive parity from ANDROID_ID hash: even -> reader-first, odd -> card-first.
+      final channel = const MethodChannel('nfc_utils');
+      String deviceId = '';
+      try {
+        deviceId = await channel.invokeMethod<String>('getAndroidId') ?? '';
+      } catch (_) {}
+      final hash = deviceId.hashCode;
+      final readerFirst = (hash & 1) == 0;
+      if (readerFirst) {
+        // Small jitter then try reading immediately
+        final jitterMs = 200 + Random().nextInt(400);
+        await Future.delayed(Duration(milliseconds: jitterMs));
+        await readFromPhoneViaHce(context);
+      } else {
+        // Prefer to serve first: give peer time to read for 1500 ms, then try reading
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await readFromPhoneViaHce(context);
+      }
     } catch (e) {
       _append('Failed to start NFC HCE: $e');
       _toast(context, 'Failed to start NFC: $e');

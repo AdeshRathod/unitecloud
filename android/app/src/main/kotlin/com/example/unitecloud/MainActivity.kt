@@ -1,12 +1,14 @@
 package com.example.unitecloud
 
 import android.content.Intent
+import android.content.ComponentName
 import android.os.Build
 import android.provider.Settings
 import android.os.Bundle
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
+import android.nfc.cardemulation.CardEmulation
 import java.nio.charset.Charset
 import java.util.concurrent.atomic.AtomicBoolean
 import io.flutter.embedding.android.FlutterActivity
@@ -54,9 +56,27 @@ class MainActivity : FlutterActivity() {
                     val timeoutMs = (call.argument<Int>("timeoutMs") ?: 15000)
                     startReaderOnce(timeoutMs, result)
                 }
+                "getAndroidId" -> {
+                    try {
+                        val id = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+                        result.success(id ?: "")
+                    } catch (e: Exception) {
+                        result.error("ID", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        try {
+            val adapter = nfcAdapter ?: return
+            val ce = CardEmulation.getInstance(adapter)
+            val cn = ComponentName(this, HceCardService::class.java)
+            ce.setPreferredService(this, cn)
+        } catch (_: Exception) { }
     }
 
     override fun onPause() {
@@ -69,6 +89,11 @@ class MainActivity : FlutterActivity() {
             } catch (_: Exception) { }
             pendingResult = null
         }
+        try {
+            val adapter = nfcAdapter ?: return
+            val ce = CardEmulation.getInstance(adapter)
+            ce.unsetPreferredService(this)
+        } catch (_: Exception) { }
     }
 
     override fun onDestroy() {
@@ -92,7 +117,7 @@ class MainActivity : FlutterActivity() {
         pendingResult = result
         readerActive.set(true)
 
-    val flags = NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
+    val flags = NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_NFC_B or NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
         adapter.enableReaderMode(this, { tag: Tag ->
             if (!readerActive.get()) return@enableReaderMode
             try {
@@ -102,7 +127,7 @@ class MainActivity : FlutterActivity() {
                     return@enableReaderMode
                 }
                 iso.connect()
-                iso.timeout = 5000
+                iso.timeout = 10000
                 val selectResp = iso.transceive(buildSelectAid())
                 if (!isSwOk(selectResp)) {
                     iso.close()
