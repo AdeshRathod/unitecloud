@@ -194,30 +194,39 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       debugPrint('[NFC] readFromPhoneViaHce: NFC not enabled');
       return;
     }
-    await _readFromPhoneViaHceInternal(context, cardFirstMode: false);
+    // Default quick read: shorter timeout/attempts to avoid long waits
+    await _readFromPhoneViaHceInternal(
+      context,
+      cardFirstMode: false,
+      timeoutMs: 12000,
+      attempts: 2,
+    );
   }
 
   Future<void> _readFromPhoneViaHceInternal(
     BuildContext context, {
     bool cardFirstMode = false,
+    int? timeoutMs,
+    int? attempts,
   }) async {
     final channel = const MethodChannel('nfc_utils');
-    const attempts = 3;
+    final int tries = attempts ?? 3;
+    final int toMs = timeoutMs ?? 25000;
     isNfcReading.value = true;
     nfcReadStatus.value = 'Align phones and hold still…';
     try {
-      for (int i = 1; i <= attempts; i++) {
+      for (int i = 1; i <= tries; i++) {
         try {
           debugPrint('[NFC] readFromPhoneViaHce: attempt $i');
-          nfcReadStatus.value = 'Reading via NFC (attempt $i of $attempts)…';
-          _append('HCE read attempt $i/$attempts ... Bring phones together.');
+          nfcReadStatus.value = 'Reading via NFC (attempt $i of $tries)…';
+          _append('HCE read attempt $i/$tries ... Bring phones together.');
           final data = await channel.invokeMethod<String>('hceReadOnce', {
-            'timeoutMs': 25000,
+            'timeoutMs': toMs,
           });
           if (data == null || data.isEmpty) {
             _append('HCE read returned empty.');
             debugPrint('[NFC] readFromPhoneViaHce: attempt $i got empty');
-            if (i == attempts) {
+            if (i == tries) {
               nfcReadStatus.value = 'No NFC peer detected.';
               _toast(context, 'No NFC peer detected. Please retry.');
               if (cardFirstMode) {
@@ -245,21 +254,11 @@ class TransferController extends GetxController with WidgetsBindingObserver {
             hceActive.value = has;
             if (!has) _append('NFC payload served; HCE now idle.');
           } catch (_) {}
-          // Optional: if we were reader-first and override is auto, try a quick reciprocal read
-          // so both sides exchange on a single action when close together.
-          try {
-            final overrideNow = nfcRoleOverride.value;
-            if (overrideNow == 'auto') {
-              await Future.delayed(const Duration(milliseconds: 250));
-              debugPrint('[NFC] reciprocal read kick-off (auto)');
-              await _readFromPhoneViaHceInternal(context, cardFirstMode: false);
-            }
-          } catch (_) {}
           return;
         } catch (e) {
           _append('HCE read error on attempt $i: $e');
           debugPrint('[NFC] readFromPhoneViaHce: attempt $i error: $e');
-          if (i == attempts) {
+          if (i == tries) {
             nfcReadStatus.value = 'NFC read failed.';
             _toast(context, 'NFC read failed: $e');
             debugPrint(
@@ -387,7 +386,15 @@ class TransferController extends GetxController with WidgetsBindingObserver {
                 : 200 + Random().nextInt(400); // 200–600ms
         await Future.delayed(Duration(milliseconds: readerDelayMs));
         debugPrint('[NFC] shareByNfcPhoneToPhone: readerFirst, starting read');
-        await _readFromPhoneViaHceInternal(context, cardFirstMode: false);
+        final int toMs =
+            (override == 'reader') ? 20000 : 8000; // shorter in auto
+        final int tries = (override == 'reader') ? 3 : 2;
+        await _readFromPhoneViaHceInternal(
+          context,
+          cardFirstMode: false,
+          timeoutMs: toMs,
+          attempts: tries,
+        );
       } else {
         // Prefer to serve first: give peer ample time to read, then try reading
         // Increased delay to reduce collisions if both default to card-first.
@@ -396,12 +403,19 @@ class TransferController extends GetxController with WidgetsBindingObserver {
             (override == 'card')
                 ? 4000 +
                     Random().nextInt(1500) // 4000–5500ms
-                : 2000 + Random().nextInt(500); // 2000–2500ms
+                : 1000 + Random().nextInt(500); // faster in auto: 1000–1500ms
         await Future.delayed(Duration(milliseconds: delayMs));
         debugPrint(
           '[NFC] shareByNfcPhoneToPhone: cardFirst, starting read after delay',
         );
-        await _readFromPhoneViaHceInternal(context, cardFirstMode: true);
+        final int toMs = (override == 'card') ? 20000 : 8000; // shorter in auto
+        final int tries = (override == 'card') ? 3 : 2;
+        await _readFromPhoneViaHceInternal(
+          context,
+          cardFirstMode: true,
+          timeoutMs: toMs,
+          attempts: tries,
+        );
       }
     } catch (e) {
       _append('Failed to start NFC HCE: $e');
