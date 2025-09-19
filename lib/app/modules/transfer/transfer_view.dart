@@ -581,91 +581,162 @@ class TransferView extends StatelessWidget {
                   ),
                   ElevatedButton.icon(
                     onPressed: () async {
-                      showDialog(
+                      await showModalBottomSheet(
                         context: context,
-                        builder: (ctx) {
-                          return AlertDialog(
-                            title: const Text('Share by QR Code'),
-                            content:
-                                controller.name.value.trim().isEmpty &&
-                                        controller.phone.value.trim().isEmpty &&
-                                        controller.email.value.trim().isEmpty
-                                    ? const Text(
-                                      'Fill contact info to generate QR',
-                                    )
-                                    : SingleChildScrollView(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          QrShareService.generateQr(
-                                            controller.contactJson,
-                                            size: 220,
+                        isScrollControlled: true,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.vertical(
+                            top: Radius.circular(16),
+                          ),
+                        ),
+                        builder: (sheetCtx) {
+                          final theme = Theme.of(sheetCtx);
+                          final color = theme.colorScheme;
+                          final textTheme = theme.textTheme;
+                          return SafeArea(
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                left: 16,
+                                right: 16,
+                                bottom:
+                                    MediaQuery.of(sheetCtx).viewInsets.bottom +
+                                    16,
+                                top: 16,
+                              ),
+                              child: DefaultTabController(
+                                length: 2,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.qr_code_2,
+                                          color: color.primary,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'QR Share & Scan',
+                                          style: textTheme.titleLarge?.copyWith(
+                                            fontWeight: FontWeight.w700,
                                           ),
-                                          const SizedBox(height: 12),
-                                          Text(
-                                            'Scan this QR to receive contact',
+                                        ),
+                                        const Spacer(),
+                                        IconButton(
+                                          icon: const Icon(Icons.close_rounded),
+                                          onPressed:
+                                              () =>
+                                                  Navigator.of(sheetCtx).pop(),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: theme
+                                            .colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.5),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const TabBar(
+                                        tabs: [
+                                          Tab(
+                                            icon: Icon(Icons.qr_code),
+                                            text: 'Show QR',
+                                          ),
+                                          Tab(
+                                            icon: Icon(Icons.qr_code_scanner),
+                                            text: 'Scan QR',
                                           ),
                                         ],
                                       ),
                                     ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(ctx).pop(),
-                                child: const Text('Close'),
+                                    const SizedBox(height: 12),
+                                    SizedBox(
+                                      height: 360,
+                                      child: TabBarView(
+                                        children: [
+                                          // Show QR tab
+                                          Builder(
+                                            builder: (_) {
+                                              final hasContact =
+                                                  controller.name.value
+                                                      .trim()
+                                                      .isNotEmpty ||
+                                                  controller.phone.value
+                                                      .trim()
+                                                      .isNotEmpty ||
+                                                  controller.email.value
+                                                      .trim()
+                                                      .isNotEmpty;
+                                              if (!hasContact) {
+                                                return Center(
+                                                  child: Text(
+                                                    'Fill contact info to generate QR',
+                                                    style: textTheme.bodyMedium,
+                                                  ),
+                                                );
+                                              }
+                                              return Column(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  QrShareService.generateQr(
+                                                    controller.contactJson,
+                                                    size: 240,
+                                                  ),
+                                                  const SizedBox(height: 12),
+                                                  Text(
+                                                    'Scan this QR to receive contact',
+                                                    style: textTheme.bodySmall,
+                                                  ),
+                                                ],
+                                              );
+                                            },
+                                          ),
+                                          // Scan QR tab
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            child:
+                                                QrShareService.buildQrScanner(
+                                                  onScanned: (data) async {
+                                                    Navigator.of(
+                                                      sheetCtx,
+                                                    ).pop();
+                                                    final contact = controller
+                                                        .parseScannedPayload(
+                                                          data,
+                                                        );
+                                                    if (contact == null) return;
+                                                    await controller
+                                                        .presentContactPreview(
+                                                          contact,
+                                                        );
+                                                  },
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
+                            ),
                           );
                         },
                       );
                     },
-                    icon: const Icon(Icons.qr_code),
-                    label: const Text('Share by QR'),
+                    icon: const Icon(Icons.qr_code_2),
+                    label: const Text('QR'),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 12,
-                runSpacing: 8,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      showDialog(
-                        context: context,
-                        builder:
-                            (ctx) => AlertDialog(
-                              title: const Text('Scan QR Code'),
-                              content: SizedBox(
-                                width: 260,
-                                height: 320,
-                                child: QrShareService.buildQrScanner(
-                                  onScanned: (data) async {
-                                    Navigator.of(ctx).pop();
-                                    final contact = controller
-                                        .parseScannedPayload(data);
-                                    if (contact == null) return;
-
-                                    await controller.presentContactPreview(
-                                      contact,
-                                    );
-                                  },
-                                ),
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.of(ctx).pop(),
-                                  child: const Text('Close'),
-                                ),
-                              ],
-                            ),
-                      );
-                    },
-                    icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Scan QR'),
-                  ),
-                ],
-              ),
+              // Removed separate Scan QR button; combined in the QR bottom sheet above.
               const SizedBox(height: 16),
               const Text(
                 'Logs:',
