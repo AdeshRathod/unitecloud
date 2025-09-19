@@ -3,7 +3,6 @@ import 'package:get/get.dart';
 import 'package:flutter/services.dart';
 import 'transfer_controller.dart';
 import '../../services/qr_share_service.dart';
-// Business logic for parsing/saving is handled in the controller
 
 class TransferView extends StatelessWidget {
   const TransferView({super.key});
@@ -20,7 +19,6 @@ class TransferView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // HCE Active banner
               Obx(() {
                 if (controller.hceActive.value) {
                   return Container(
@@ -57,7 +55,6 @@ class TransferView extends StatelessWidget {
                 }
                 return const SizedBox.shrink();
               }),
-              // NFC reading progress
               Obx(() {
                 if (controller.isNfcReading.value ||
                     (controller.nfcReadStatus.value.isNotEmpty)) {
@@ -101,7 +98,7 @@ class TransferView extends StatelessWidget {
                         if (controller.isNfcReading.value)
                           TextButton(
                             onPressed: () async {
-                              await controller.stopHceShare();
+                              await controller.cancelNfcRead();
                             },
                             child: const Text('Cancel'),
                           ),
@@ -159,61 +156,42 @@ class TransferView extends StatelessWidget {
                 }
                 return const SizedBox.shrink();
               }),
-              TextField(
-                controller: controller.nameController,
-                decoration: const InputDecoration(labelText: 'Name'),
+              // Replace plain TextFields with Obx-wrapped fields to show errorText
+              Obx(
+                () => TextField(
+                  controller: controller.nameController,
+                  decoration: InputDecoration(
+                    labelText: 'Name',
+                    errorText: controller.nameError.value,
+                  ),
+                ),
               ),
-              TextField(
-                controller: controller.phoneController,
-                decoration: const InputDecoration(labelText: 'Phone'),
-                keyboardType: TextInputType.phone,
+              Obx(
+                () => TextField(
+                  controller: controller.phoneController,
+                  decoration: InputDecoration(
+                    labelText: 'Phone',
+                    errorText: controller.phoneError.value,
+                  ),
+                  keyboardType: TextInputType.phone,
+                ),
               ),
-              TextField(
-                controller: controller.emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
-                keyboardType: TextInputType.emailAddress,
+              Obx(
+                () => TextField(
+                  controller: controller.emailController,
+                  decoration: InputDecoration(
+                    labelText: 'Email',
+                    errorText: controller.emailError.value,
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
               ),
-              const SizedBox(height: 12),
-
-              // Obx(() {
-              //   final sel = controller.nfcRoleOverride.value;
-              //   return Row(
-              //     children: [
-              //       const Text('NFC role:'),
-              //       const SizedBox(width: 8),
-              //       ChoiceChip(
-              //         label: const Text('Auto'),
-              //         selected: sel == 'auto',
-              //         onSelected: (v) {
-              //           if (v) controller.nfcRoleOverride.value = 'auto';
-              //         },
-              //       ),
-              //       const SizedBox(width: 6),
-              //       ChoiceChip(
-              //         label: const Text('Reader'),
-              //         selected: sel == 'reader',
-              //         onSelected: (v) {
-              //           if (v) controller.nfcRoleOverride.value = 'reader';
-              //         },
-              //       ),
-              //       const SizedBox(width: 6),
-              //       ChoiceChip(
-              //         label: const Text('Card'),
-              //         selected: sel == 'card',
-              //         onSelected: (v) {
-              //           if (v) controller.nfcRoleOverride.value = 'card';
-              //         },
-              //       ),
-              //     ],
-              //   );
-              // }),
               const SizedBox(height: 12),
               Wrap(
                 alignment: WrapAlignment.center,
                 spacing: 12,
                 runSpacing: 8,
                 children: [
-                  // NFC Share (phone-to-phone unified)
                   Obx(
                     () =>
                         controller.hasNfc.value
@@ -226,10 +204,8 @@ class TransferView extends StatelessWidget {
                             )
                             : const SizedBox.shrink(),
                   ),
-                  // TransferService (Nearby/Bluetooth)
                   ElevatedButton.icon(
                     onPressed: () async {
-                      // Clean UI bottom sheet for Nearby flows
                       showModalBottomSheet(
                         context: context,
                         isScrollControlled: true,
@@ -382,7 +358,6 @@ class TransferView extends StatelessWidget {
                                             : const SizedBox.shrink(),
                                   ),
                                   const SizedBox(height: 8),
-                                  // Show code inline when in code sender mode
                                   Obx(() {
                                     final showCode =
                                         controller.nearbyActive.value &&
@@ -495,14 +470,12 @@ class TransferView extends StatelessWidget {
                                           onPressed: () async {
                                             await controller
                                                 .startNearbyCodeSender();
-                                            // Code is shown inline above in this bottom sheet.
                                           },
                                           child: const Text('Get code'),
                                         ),
                                         const SizedBox(width: 8),
                                         ElevatedButton(
                                           onPressed: () async {
-                                            // Open mini form inline in dialog
                                             await showDialog(
                                               context: sheetCtx,
                                               builder: (dCtx) {
@@ -606,7 +579,6 @@ class TransferView extends StatelessWidget {
                     icon: const Icon(Icons.wifi_tethering),
                     label: const Text('Share Nearby'),
                   ),
-                  // QR Code Share
                   ElevatedButton.icon(
                     onPressed: () async {
                       showDialog(
@@ -657,7 +629,6 @@ class TransferView extends StatelessWidget {
                 spacing: 12,
                 runSpacing: 8,
                 children: [
-                  // QR Code Scan
                   ElevatedButton.icon(
                     onPressed: () async {
                       showDialog(
@@ -675,7 +646,6 @@ class TransferView extends StatelessWidget {
                                         .parseScannedPayload(data);
                                     if (contact == null) return;
 
-                                    // Reuse controller's preview sheet for consistency
                                     await controller.presentContactPreview(
                                       contact,
                                     );

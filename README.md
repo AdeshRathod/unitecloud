@@ -11,6 +11,9 @@ This project demonstrates two approaches for sharing a small contact card betwee
 - Clean Nearby flows: auto-discover or manual 6-char code entry, with bidirectional exchange.
 - Nearby Connections wrapper to advertise/discover using token-based serviceId.
 - Reactive UI with logs and list of received contacts (GetX state management).
+- Human-readable logs across NFC and Nearby (discover/connect/transfer/cancel).
+- Per-field input validation with inline errors (Name/Phone/Email).
+- Graceful handling of NFC disabled/unavailable, permission errors, and user-cancel.
 
 ## Folder Structure (Relevant Parts)
 
@@ -56,6 +59,7 @@ On iOS: `nearby_connections` is not supported; NFC reading/writing limited by ha
 ## Architecture Overview
 
 - `TransferController` orchestrates NFC HCE exchange and Nearby flows.
+- Deterministic NFC roles: devices pick reader/card deterministically using ANDROID_ID parity, with a manual override fallback internally after failures.
 - Native Android HCE service serves an APDU-based chunk protocol; the app runs reader mode to pull payload.
 - `TransferService` abstracts Nearby advertising, discovery, and payload sending.
 - A 6-character token (base32-like) identifies the temporary Nearby serviceId.
@@ -80,8 +84,10 @@ Manual: one gets 6-char code -> other enters code -> connect -> exchange payload
 2. Sender enters contact (small payload) <= 1.8 KB -> Tap: ensure receiver logs receipt & contact appears.
 3. Modify code temporarily to pad JSON > 2 KB -> Tap: confirm token path: receiver first logs token, then after Nearby connection full payload arrives.
 4. Turn off NFC on receiver -> attempt share -> ensure proper availability log.
-5. Deny Bluetooth / Location permission -> verify graceful failure messages.
+5. Deny Bluetooth / Location permission -> verify graceful failure messages (Nearby sender/receiver fail cleanly, logs show the reason).
 6. For NFC HCE, align backs of phones; if both try to read, the deterministic role prevents collisions.
+7. Start NFC read and press Cancel -> the read stops, log shows "NFC read canceled" and UI returns to idle; Try again re-arms and retries.
+8. Leave NFC off and press Share by NFC -> app prompts and logs "NFC is not enabled or not available."
 
 ## Limitations
 
@@ -109,6 +115,14 @@ flutter run
 ```
 
 Tap two devices together (screen on, NFC enabled). On large payload test scenario, observe token handshake logs.
+
+Expected log examples:
+- NFC active. Bring the other phone close to read.
+- NFC HCE ready. Bring the other phone close to exchange.
+- HCE read attempt 1/2 ... Bring phones together.
+- Received 512 bytes / Contact saved: Alice
+- NFC read canceled.
+- Nearby: advertising started / connection initiated / payload 384 bytes sent.
 
 ## Troubleshooting
 

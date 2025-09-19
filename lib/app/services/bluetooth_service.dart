@@ -16,12 +16,10 @@ class TransferService {
   bool _advertising = false;
   bool _discovering = false;
   final Set<String> _connectingEndpoints = <String>{};
-  // Track endpoints we've retried a requestConnection for to avoid infinite loops
   final Set<String> _requestRetried = <String>{};
 
   void _log(String msg) {
     if (kDebugMode) {
-      // ignore: avoid_print
       print('[Nearby] $msg');
     }
     _logController.add(msg);
@@ -32,7 +30,6 @@ class TransferService {
       _log('Nearby only supported on Android.');
       return {};
     }
-    // Request a comprehensive set; on older Android versions, extra ones are ignored.
     final requests =
         await [
           Permission.bluetooth, // pre-Android 12
@@ -57,7 +54,6 @@ class TransferService {
         (req[Permission.bluetooth]?.isGranted ?? false) ||
         ((req[Permission.bluetoothScan]?.isGranted ?? false) &&
             (req[Permission.bluetoothConnect]?.isGranted ?? false));
-    // Require either scan (Android 12+) or location (Android 11 and below).
     final scanOrLocation =
         (req[Permission.bluetoothScan]?.isGranted ?? false) ||
         (req[Permission.locationWhenInUse]?.isGranted ?? false) ||
@@ -129,7 +125,6 @@ class TransferService {
         onConnectionResult: (id, status) async {
           _log('Connection result for $id => $status');
           if (status == Status.CONNECTED) {
-            // Send payload after the connection is established.
             if (payloadToSend != null) {
               try {
                 final data = Uint8List.fromList(payloadToSend.codeUnits);
@@ -188,7 +183,6 @@ class TransferService {
         _strategy,
         onEndpointFound: (id, name, serviceId) async {
           _log('Endpoint found id=$id name=$name serviceId=$serviceId');
-          // Match on constant serviceId and token in endpoint name (format: uc|TOKEN)
           if (serviceId == 'unitecloud.transfer' &&
               name.toUpperCase().contains('UC|$tokenUp')) {
             if (_connectingEndpoints.contains(id)) {
@@ -198,7 +192,6 @@ class TransferService {
               return;
             }
             _connectingEndpoints.add(id);
-            // Small debounce to avoid race after recovery restarts
             await Future.delayed(const Duration(milliseconds: 100));
             try {
               await _nearby.requestConnection(
@@ -414,7 +407,6 @@ class TransferService {
     _log('Discovery started: $_discovering');
   }
 
-  // Open advertise without a token, useful for "just find peers" mode.
   Future<void> advertiseOpen(
     String endpointName, {
     String? payloadToSend,
@@ -492,7 +484,6 @@ class TransferService {
     _log('Open advertising started: $_advertising');
   }
 
-  // Open discovery without a token; connects to the first matching endpoint and optionally sends payload.
   Future<void> discoverOpen({
     String discovererName = 'unitecloud-auto',
     String? payloadToSend,

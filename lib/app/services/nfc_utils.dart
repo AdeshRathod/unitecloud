@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class NfcUtils {
-  /// Returns true if device has NFC hardware, false otherwise.
   static Future<bool> hasNfcHardware() async {
     const platform = MethodChannel('nfc_utils');
     try {
@@ -41,7 +40,6 @@ class NfcUtils {
     }
   }
 
-  // Avoid BuildContext across async gaps; use Get.dialog for prompts
   static Future<bool> ensureNfcEnabled() async {
     if (Platform.isAndroid) {
       final bluetoothStatus = await Permission.bluetooth.status;
@@ -57,7 +55,6 @@ class NfcUtils {
     try {
       final enabled = await platform.invokeMethod<bool>('isNfcEnabled');
       if (enabled == null) {
-        // Could not determine NFC state, assume enabled or device not supported
         return true;
       }
       if (enabled == false) {

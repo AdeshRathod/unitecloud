@@ -1,5 +1,3 @@
-/// Contact data model representing a simple person/contact card.
-/// Supports JSON serialization and size estimation for NFC payload limits.
 class Contact {
   final String name;
   final String phone;
@@ -25,9 +23,7 @@ class Contact {
     email: (json['email'] ?? '') as String,
   );
 
-  /// Estimate the UTF-8 byte size of JSON representation.
   int byteSize() {
-    // Basic naive estimation (Dart strings are UTF-16 but we assume ASCII mostly here).
     return toJson().toString().codeUnits.length;
   }
 

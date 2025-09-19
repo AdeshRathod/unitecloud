@@ -11,16 +11,11 @@ import '../../services/nfc_utils.dart';
 import '../../services/bluetooth_service.dart';
 
 class TransferController extends GetxController with WidgetsBindingObserver {
-  // Track if last cardFirst attempt failed, to force reader on next try
   bool _lastCardFirstFailed = false;
-  // Guard to prevent overlapping share flows
   bool _shareInProgress = false;
   String get contactJson => jsonEncode(_buildContact().toJson());
   Future<void> shareByNearby() async {
-    // Kept for backward compatibility: open Nearby sheet from the view.
-    // No-op here or could be used to trigger default flow.
     if (!_validate()) return;
-    // Default behavior: start open auto nearby (advertise+discover).
     await startNearbyAuto();
   }
 
@@ -28,6 +23,9 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   final nameController = TextEditingController();
   final phoneController = TextEditingController();
   final emailController = TextEditingController();
+  final nameError = RxnString();
+  final phoneError = RxnString();
+  final emailError = RxnString();
 
   @override
   void onInit() {
@@ -39,23 +37,23 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     nameController.addListener(() {
       if (name.value != nameController.text) {
         name.value = nameController.text;
+        nameError.value = _validateName(name.value);
       }
     });
     phoneController.addListener(() {
       if (phone.value != phoneController.text) {
         phone.value = phoneController.text;
+        phoneError.value = _validatePhone(phone.value);
       }
     });
     emailController.addListener(() {
       if (email.value != emailController.text) {
         email.value = emailController.text;
+        emailError.value = _validateEmail(email.value);
       }
     });
 
-    // Subscribe to service logs
-    _nearbyLogSub = transferService.logs.listen((msg) {
-      _append('Nearby: $msg');
-    });
+    _nearbyLogSub = transferService.logs.listen(_appendNearbyFriendly);
   }
 
   @override
@@ -80,23 +78,20 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   final TransferService transferService;
   TransferController({required this.transferService});
 
-  final name = 'Adesh'.obs;
-  final phone = '9307015431'.obs;
-  final email = 'adesh@gmail.com'.obs;
+  final name = ''.obs;
+  final phone = ''.obs;
+  final email = ''.obs;
 
   final log = ''.obs;
   final contacts = <Contact>[].obs;
   final nfcEnabled = true.obs;
   final hceActive = false.obs;
-  // UI: NFC reading progress/state
   final isNfcReading = false.obs;
   final nfcReadStatus = ''.obs;
-  // Manual override for NFC role selection: 'auto' | 'reader' | 'card'
   final nfcRoleOverride = 'auto'.obs;
 
-  // Nearby state
   final nearbyActive = false.obs;
-  final nearbyMode = ''.obs; // 'auto' | 'sender' | 'receiver'
+  final nearbyMode = ''.obs;
   final advertisingToken = RxnString();
   StreamSubscription<String>? _nearbyLogSub;
 
@@ -129,29 +124,84 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       await checkNfcEnabledSilent();
     } else {
       nfcEnabled.value = false;
-      _append('NFC device not detected on your device. Use share option.');
+      _append('This device doesn’t support NFC. Use Nearby or QR.');
     }
   }
 
   void _append(String msg) {
-    final ts = DateTime.now().toIso8601String();
-    log.value = '[${ts.split('T').last}] $msg\n${log.value}';
+    final now = DateTime.now();
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    final ss = now.second.toString().padLeft(2, '0');
+    log.value = '[$hh:$mm:$ss] $msg\n${log.value}';
+  }
+
+  void _appendNearbyFriendly(String raw) {
+    final lc = raw.toLowerCase();
+    // Success events
+    if (lc.contains('payload received')) {
+      _append('Contact received.');
+      return;
+    }
+    if (lc.contains('auto-send complete') || lc.startsWith('sent payload')) {
+      _append('Contact sent.');
+      return;
+    }
+    if (lc.contains('connection result') && lc.contains('connected')) {
+      _append('Nearby connected.');
+      return;
+    }
+    // Stop/cleanup
+    if (lc.startsWith('stopped advertising') ||
+        lc.startsWith('stopped discovering')) {
+      _append('Nearby stopped.');
+      return;
+    }
+    // Errors
+    if (lc.contains('failed') ||
+        lc.contains('cannot') ||
+        lc.contains('missing permission')) {
+      _append('Nearby failed.');
+      return;
+    }
+    // Ignore verbose/internal messages (advertising/discovery started, endpoints, retries, etc.)
   }
 
   bool _validate() {
-    if (name.value.trim().isEmpty) {
-      _append('Name required.');
-      return false;
+    nameError.value = _validateName(name.value);
+    phoneError.value = _validatePhone(phone.value);
+    emailError.value = _validateEmail(email.value);
+    final ok =
+        nameError.value == null &&
+        phoneError.value == null &&
+        emailError.value == null;
+    if (!ok) {
+      _append('Fix the highlighted fields and try again.');
     }
-    if (phone.value.trim().isEmpty) {
-      _append('Phone required.');
-      return false;
-    }
-    if (email.value.trim().isEmpty) {
-      _append('Email required.');
-      return false;
-    }
-    return true;
+    return ok;
+  }
+
+  String? _validateName(String v) {
+    final t = v.trim();
+    if (t.isEmpty) return 'Name is required';
+    if (t.length < 2) return 'Enter at least 2 characters';
+    return null;
+  }
+
+  String? _validatePhone(String v) {
+    final t = v.trim();
+    if (t.isEmpty) return 'Phone is required';
+    final digits = t.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (digits.length < 7) return 'Enter a valid phone number';
+    return null;
+  }
+
+  String? _validateEmail(String v) {
+    final t = v.trim();
+    if (t.isEmpty) return 'Email is required';
+    final re = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    if (!re.hasMatch(t)) return 'Enter a valid email address';
+    return null;
   }
 
   Contact _buildContact() => Contact(
@@ -160,7 +210,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     email: email.value.trim(),
   );
 
-  // HCE: emulate a card to allow phone-to-phone via NFC
   Future<void> startHceShare() async {
     if (!_validate()) return;
     await checkNfcEnabled();
@@ -171,16 +220,27 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     final jsonStr = contactJson;
     await NfcHceService.setPayload(jsonStr);
     hceActive.value = true;
-    _append('HCE active. Bring the other phone close to read.');
+    _append('NFC ready—hold phones together.');
   }
 
   Future<void> stopHceShare() async {
+    try {
+      await NfcHceService.disableReader();
+    } catch (_) {}
     await NfcHceService.clear();
     hceActive.value = false;
-    // Also stop any UI indicators
     isNfcReading.value = false;
     nfcReadStatus.value = '';
-    _append('HCE stopped.');
+    _append('NFC stopped.');
+  }
+
+  Future<void> cancelNfcRead() async {
+    try {
+      await NfcHceService.disableReader();
+    } catch (_) {}
+    isNfcReading.value = false;
+    nfcReadStatus.value = 'Canceled by you';
+    _append('NFC read canceled.');
   }
 
   Future<void> readFromPhoneViaHce() async {
@@ -191,7 +251,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       debugPrint('[NFC] readFromPhoneViaHce: NFC not enabled');
       return;
     }
-    // Default quick read: shorter timeout/attempts to avoid long waits
     await _readFromPhoneViaHceInternal(
       cardFirstMode: false,
       timeoutMs: 12000,
@@ -209,21 +268,21 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     final int toMs = timeoutMs ?? 25000;
     isNfcReading.value = true;
     nfcReadStatus.value = 'Align phones and hold still…';
+    _append('Trying to read via NFC… Hold phones together.');
     try {
       for (int i = 1; i <= tries; i++) {
         try {
           debugPrint('[NFC] readFromPhoneViaHce: attempt $i');
-          nfcReadStatus.value = 'Reading via NFC (attempt $i of $tries)…';
-          _append('HCE read attempt $i/$tries ... Bring phones together.');
+          nfcReadStatus.value = 'Reading via NFC…';
           final data = await channel.invokeMethod<String>('hceReadOnce', {
             'timeoutMs': toMs,
           });
           if (data == null || data.isEmpty) {
-            _append('HCE read returned empty.');
             debugPrint('[NFC] readFromPhoneViaHce: attempt $i got empty');
             if (i == tries) {
-              nfcReadStatus.value = 'No NFC peer detected.';
-              _toast('No NFC peer detected. Please retry.');
+              nfcReadStatus.value = 'No device detected.';
+              _append('No device detected. Try again.');
+              _toast('No NFC device detected. Please try again.');
               if (cardFirstMode) {
                 _lastCardFirstFailed = true;
                 debugPrint(
@@ -233,29 +292,25 @@ class TransferController extends GetxController with WidgetsBindingObserver {
             }
             continue;
           }
-          _append('HCE read ${data.length} bytes.');
-          nfcReadStatus.value = 'Received ${data.length} bytes';
-          // Keep HCE armed so the peer can read our contact after we received theirs.
-          // Native HCE will clear automatically after serving to the peer.
+          _append('Contact received.');
+          nfcReadStatus.value = 'Contact received';
           debugPrint('[NFC] readFromPhoneViaHce: keeping HCE active for peer');
           debugPrint(
             '[NFC] readFromPhoneViaHce: attempt $i success, stopping reader',
           );
           await NfcHceService.disableReader();
           _handleIncoming(data);
-          // Refresh HCE active banner based on serve-once native state
           try {
             final has = await NfcHceService.hasPayload();
             hceActive.value = has;
-            if (!has) _append('NFC payload served; HCE now idle.');
           } catch (_) {}
           return;
         } catch (e) {
-          _append('HCE read error on attempt $i: $e');
           debugPrint('[NFC] readFromPhoneViaHce: attempt $i error: $e');
           if (i == tries) {
             nfcReadStatus.value = 'NFC read failed.';
-            _toast('NFC read failed: $e');
+            _append('NFC read failed. Try again.');
+            _toast('NFC read failed. Please try again.');
             debugPrint(
               '[NFC] readFromPhoneViaHce: all attempts failed, stopping reader',
             );
@@ -268,13 +323,12 @@ class TransferController extends GetxController with WidgetsBindingObserver {
             }
           } else {
             nfcReadStatus.value = 'Retrying…';
-            // Backoff based on error type to avoid thrash
             final msg = e.toString();
             int delayMs = 300;
             if (msg.contains('BUSY') || msg.contains('CANCELLED')) {
-              delayMs = 350 + Random().nextInt(200); // 350–550ms
+              delayMs = 350 + Random().nextInt(200);
             } else if (msg.contains('READ') || msg.contains('Tag was lost')) {
-              delayMs = 250 + Random().nextInt(200); // 250–450ms
+              delayMs = 250 + Random().nextInt(200);
             }
             await Future.delayed(Duration(milliseconds: delayMs));
           }
@@ -288,33 +342,27 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     }
   }
 
-  // Retry only the reader while keeping HCE active
   Future<void> retryNfcRead() async {
     debugPrint('[NFC] retryNfcRead: called');
-    if (isNfcReading.value) return; // already in progress
+    if (isNfcReading.value) return;
     await checkNfcEnabled();
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
       debugPrint('[NFC] retryNfcRead: NFC not enabled');
       return;
     }
-    // Ensure HCE is still armed if user stopped it inadvertently
     if (!hceActive.value && _validate()) {
       await NfcHceService.setPayload(contactJson);
       hceActive.value = true;
       _append('Re-armed NFC HCE for retry.');
       debugPrint('[NFC] retryNfcRead: re-armed HCE');
     }
-    // Small jitter to reduce collisions if both tap Try again simultaneously
     final jitterMs = 200 + Random().nextInt(600);
     await Future.delayed(Duration(milliseconds: jitterMs));
     debugPrint('[NFC] retryNfcRead: starting read after jitter');
     await readFromPhoneViaHce();
   }
 
-  // Unified phone-to-phone NFC share (both devices do this):
-  // 1) Validate and set HCE payload (emulate card with my contact)
-  // 2) Start reader once to pull peer's payload
   Future<void> shareByNfcPhoneToPhone() async {
     debugPrint('[NFC] shareByNfcPhoneToPhone: called');
     if (_shareInProgress) {
@@ -322,15 +370,17 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       return;
     }
     _shareInProgress = true;
-    // Always stop any previous reader before starting a new share
     await NfcHceService.disableReader();
-    // Allow native to settle
     await Future.delayed(const Duration(milliseconds: 120));
-    if (!_validate()) return;
+    if (!_validate()) {
+      _shareInProgress = false;
+      return;
+    }
     await checkNfcEnabled();
     if (!nfcEnabled.value) {
       _append('NFC is not enabled or not available.');
       debugPrint('[NFC] shareByNfcPhoneToPhone: NFC not enabled');
+      _shareInProgress = false;
       return;
     }
     try {
@@ -340,27 +390,20 @@ class TransferController extends GetxController with WidgetsBindingObserver {
       debugPrint(
         '[NFC] shareByNfcPhoneToPhone: HCE payload set, hceActive true',
       );
-      // No fixed auto-clear: the native HCE clears the payload after serving the
-      // final chunk (serve-once). User can stop manually if desired.
-      // Deterministic role selection to avoid both reading at once:
-      // Derive parity from ANDROID_ID hash: even -> reader-first, odd -> card-first.
       final channel = const MethodChannel('nfc_utils');
       String deviceId = '';
       try {
         deviceId = await channel.invokeMethod<String>('getAndroidId') ?? '';
       } catch (_) {}
       final hash = deviceId.hashCode;
-      // Fallback: if last attempt in card-first mode failed, force reader this time
-      // but only if our deterministic hash says we'd otherwise be card (odd).
       bool forceReader = false;
       if (_lastCardFirstFailed) {
         if ((hash & 1) == 1) {
-          forceReader = true; // flip to reader only for odd hash
+          forceReader = true;
         }
         _lastCardFirstFailed = false;
       }
 
-      // Apply manual override if set by the user
       final override = nfcRoleOverride.value;
       bool? overrideReaderFirst;
       if (override == 'reader') overrideReaderFirst = true;
@@ -372,17 +415,13 @@ class TransferController extends GetxController with WidgetsBindingObserver {
         '[NFC] role: deviceId=$deviceId hash=$hash override=$override forceReader=$forceReader readerFirst=$readerFirst',
       );
       if (readerFirst) {
-        // Small jitter then try reading immediately. If user explicitly chose 'reader',
-        // wait a little longer to allow the other phone to arm HCE first.
         final readerDelayMs =
             (override == 'reader')
-                ? 1000 +
-                    Random().nextInt(500) // 1000–1500ms
-                : 200 + Random().nextInt(400); // 200–600ms
+                ? 1000 + Random().nextInt(500)
+                : 200 + Random().nextInt(400);
         await Future.delayed(Duration(milliseconds: readerDelayMs));
         debugPrint('[NFC] shareByNfcPhoneToPhone: readerFirst, starting read');
-        final int toMs =
-            (override == 'reader') ? 20000 : 8000; // shorter in auto
+        final int toMs = (override == 'reader') ? 20000 : 8000;
         final int tries = (override == 'reader') ? 3 : 2;
         await _readFromPhoneViaHceInternal(
           cardFirstMode: false,
@@ -390,19 +429,15 @@ class TransferController extends GetxController with WidgetsBindingObserver {
           attempts: tries,
         );
       } else {
-        // Prefer to serve first: give peer ample time to read, then try reading
-        // Increased delay to reduce collisions if both default to card-first.
-        // But if explicitly overridden to 'card', use a short delay since the peer should be 'reader'.
         final delayMs =
             (override == 'card')
-                ? 4000 +
-                    Random().nextInt(1500) // 4000–5500ms
-                : 1000 + Random().nextInt(500); // faster in auto: 1000–1500ms
+                ? 4000 + Random().nextInt(1500)
+                : 1000 + Random().nextInt(500);
         await Future.delayed(Duration(milliseconds: delayMs));
         debugPrint(
           '[NFC] shareByNfcPhoneToPhone: cardFirst, starting read after delay',
         );
-        final int toMs = (override == 'card') ? 20000 : 8000; // shorter in auto
+        final int toMs = (override == 'card') ? 20000 : 8000;
         final int tries = (override == 'card') ? 3 : 2;
         await _readFromPhoneViaHceInternal(
           cardFirstMode: true,
@@ -420,7 +455,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   }
 
   void _toast(String msg) {
-    // Context-free toast to avoid use_build_context_synchronously issues
     Get.snackbar('Info', msg, snackPosition: SnackPosition.BOTTOM);
   }
 
@@ -437,7 +471,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
   Future<void> presentContactPreview(Contact contact) async {
     final context = Get.context;
     if (context == null) {
-      // Fallback: direct save if no context
       contacts.insert(0, contact);
       _append('Contact saved: ${contact.name}');
       return;
@@ -625,7 +658,6 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     _append('Contact saved: ${contact.name}');
   }
 
-  // Nearby: Auto mode (bidirectional)
   Future<void> startNearbyAuto() async {
     if (!_validate()) return;
     if (nearbyActive.value) {
@@ -635,17 +667,26 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     final jsonStr = contactJson;
     nearbyMode.value = 'auto';
     nearbyActive.value = true;
-    // Start both advertiseOpen and discoverOpen; service stops itself when connected.
-    _append('Starting Auto Nearby (advertise + discover) ...');
-    await transferService.advertiseOpen(
-      'unitecloud-auto',
-      payloadToSend: jsonStr,
-      onPayload: (full) => _handleIncoming(full),
-    );
-    await transferService.discoverOpen(
-      payloadToSend: jsonStr,
-      onPayload: (full) => _handleIncoming(full),
-    );
+    _append('Nearby started (Auto).');
+    try {
+      await transferService.advertiseOpen(
+        'unitecloud-auto',
+        payloadToSend: jsonStr,
+        onPayload: (full) => _handleIncoming(full),
+      );
+      await transferService.discoverOpen(
+        payloadToSend: jsonStr,
+        onPayload: (full) => _handleIncoming(full),
+      );
+    } on PlatformException catch (e) {
+      _append('Nearby couldn’t start.');
+      _toast('Nearby failed: ${e.message ?? e.code}');
+      nearbyActive.value = false;
+    } catch (e) {
+      _append('Nearby couldn’t start.');
+      _toast('Nearby failed: $e');
+      nearbyActive.value = false;
+    }
   }
 
   Future<String?> startNearbyCodeSender() async {
@@ -659,13 +700,27 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     nearbyMode.value = 'sender';
     nearbyActive.value = true;
     advertisingToken.value = token;
-    _append('Starting Nearby as sender with code $token');
-    await transferService.advertise(
-      'unitecloud-sender',
-      token,
-      payloadToSend: jsonStr,
-      onPayload: (full) => _handleIncoming(full),
-    );
+    _append('Your code: $token');
+    try {
+      await transferService.advertise(
+        'unitecloud-sender',
+        token,
+        payloadToSend: jsonStr,
+        onPayload: (full) => _handleIncoming(full),
+      );
+    } on PlatformException catch (e) {
+      _append('Nearby sender failed.');
+      _toast('Nearby sender failed: ${e.message ?? e.code}');
+      nearbyActive.value = false;
+      advertisingToken.value = null;
+      return null;
+    } catch (e) {
+      _append('Nearby sender failed.');
+      _toast('Nearby sender failed: $e');
+      nearbyActive.value = false;
+      advertisingToken.value = null;
+      return null;
+    }
     return token;
   }
 
@@ -686,13 +741,25 @@ class TransferController extends GetxController with WidgetsBindingObserver {
     nearbyActive.value = true;
     advertisingToken.value = token;
     _append(
-      'Starting Nearby as receiver for code $token ${sendBack ? '(will send my contact back)' : ''}',
+      'Connecting with code $token ${sendBack ? '(and will send my contact back)' : ''}',
     );
-    await transferService.discover(
-      token,
-      payloadToSend: jsonStr,
-      onPayload: (full) => _handleIncoming(full),
-    );
+    try {
+      await transferService.discover(
+        token,
+        payloadToSend: jsonStr,
+        onPayload: (full) => _handleIncoming(full),
+      );
+    } on PlatformException catch (e) {
+      _append('Nearby receiver failed.');
+      _toast('Nearby receiver failed: ${e.message ?? e.code}');
+      nearbyActive.value = false;
+      advertisingToken.value = null;
+    } catch (e) {
+      _append('Nearby receiver failed.');
+      _toast('Nearby receiver failed: $e');
+      nearbyActive.value = false;
+      advertisingToken.value = null;
+    }
   }
 
   Future<void> stopNearby() async {
