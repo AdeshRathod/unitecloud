@@ -141,7 +141,3 @@ iOS: Nearby Connections is not supported. NFC is limited by CoreNFC/entitlements
 - Android only for Nearby; NFC HCE timing can vary across OEMs.
 - No persistence layer (contacts held in-memory). Consider Hive/SQLite.
 - No encryption/handshake; suitable for non-sensitive data.
-
-## License
-
-MIT-style license or internal usage only (adjust as needed).
